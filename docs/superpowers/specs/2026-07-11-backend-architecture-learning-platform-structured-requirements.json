@@ -1,0 +1,851 @@
+{
+  "schema_version": "1.0",
+  "project_name": "Website-GoBased",
+  "feature_id": "backend_architecture_learning_platform_mvp",
+  "feature_name": "互联网后端架构学习平台MVP",
+  "source_path": "User-approved design dialogue; README.md; selected Go source files",
+  "actors": [
+    "visitor",
+    "test_user",
+    "administrator",
+    "platform_control_plane",
+    "lab_runtime"
+  ],
+  "preconditions": [
+    "The target Linux server provides Docker and Docker Compose.",
+    "Experiment images are pre-pulled before the limited user test.",
+    "Test accounts are created by an administrator."
+  ],
+  "business_rules": [
+    "Each account may have at most one active lab.",
+    "At least one application instance must remain in a running cluster lab.",
+    "Labs expire after 10 minutes of inactivity or 30 minutes total lifetime.",
+    "The MVP is free exploration without scoring or ranking."
+  ],
+  "input_constraints": [
+    "Application performance percentage is between 20 and 100 in steps of 10.",
+    "Load-balancing labs contain one to four application instances.",
+    "Cache labs contain one to three application instances and one session Redis.",
+    "Only allowlisted guided actions are accepted.",
+    "The MVP targets no more than 10 concurrent test users."
+  ],
+  "error_conditions": [
+    "Authentication or CSRF validation fails.",
+    "The requested lab or instance belongs to another user.",
+    "An instance or global resource limit is reached.",
+    "Docker, Nginx, Redis, or MySQL is unavailable.",
+    "A requested action is not valid for the current scenario or state.",
+    "A duplicate or concurrent topology operation cannot be safely executed."
+  ],
+  "requirement_items": [
+    {
+      "id": "R1",
+      "description": "系统应展示图片所示的完整互联网后端架构学习路线。",
+      "input_fields": [],
+      "data_ranges": [],
+      "conditions": [
+        "用户访问知识地图"
+      ],
+      "expected_actions": [
+        "系统展示全部知识节点及其当前状态。"
+      ],
+      "notes": "Title: 完整知识地图. Source: SRC-CLI-001, SRC-CLI-002. Type: functional. Confidence: high. Status: accepted. Constraints: MVP仅激活已批准课程，其余节点必须保留. Acceptance candidate: 给定任意访客进入知识地图，页面可看到全部架构节点及状态。"
+    },
+    {
+      "id": "R2",
+      "description": "未登录用户应能浏览知识地图、课程介绍和理论内容。",
+      "input_fields": [],
+      "data_ranges": [],
+      "conditions": [
+        "用户未登录"
+      ],
+      "expected_actions": [
+        "系统返回理论内容并隐藏或禁用实验操作。"
+      ],
+      "notes": "Title: 匿名理论访问. Source: SRC-CLI-002. Type: functional. Confidence: high. Status: accepted. Constraints: 不得允许未登录用户启动或操作实验. Acceptance candidate: 给定未登录用户访问理论页，内容可见；创建实验请求返回AUTH_REQUIRED。"
+    },
+    {
+      "id": "R3",
+      "description": "MVP范围外的知识点应保留可访问的待完成占位页。",
+      "input_fields": [
+        "courseId"
+      ],
+      "data_ranges": [],
+      "conditions": [
+        "知识点不属于MVP实验白名单"
+      ],
+      "expected_actions": [
+        "系统展示名称、问题、预计技术和待完成状态。"
+      ],
+      "notes": "Title: 待完成知识占位. Source: SRC-CLI-002. Type: functional. Confidence: high. Status: accepted. Constraints: 占位页不得创建任何实验资源. Acceptance candidate: 给定用户打开待完成知识点，系统只展示占位信息且无可用实验按钮。"
+    },
+    {
+      "id": "R4",
+      "description": "每个MVP课程和实验页应只读展示后端实现逻辑。",
+      "input_fields": [],
+      "data_ranges": [],
+      "conditions": [
+        "课程属于MVP范围"
+      ],
+      "expected_actions": [
+        "系统展示调用链、拓扑、关键配置变化、指标含义和核心伪代码。"
+      ],
+      "notes": "Title: 后端实现逻辑说明. Source: SRC-CLI-002. Type: functional. Confidence: high. Status: accepted. Constraints: 用户不得在MVP中编辑配置、代码或执行终端命令. Acceptance candidate: 给定用户进入MVP课程，页面可查看对应实现逻辑且不存在任意配置执行入口。"
+    },
+    {
+      "id": "R5",
+      "description": "所有实验应使用网购平台的商品查询和模拟订单作为统一业务背景。",
+      "input_fields": [],
+      "data_ranges": [],
+      "conditions": [
+        "系统生成实验请求"
+      ],
+      "expected_actions": [
+        "系统使用预置商品、用户和订单数据生成轻量请求。"
+      ],
+      "notes": "Title: 网购业务背景. Source: SRC-CLI-001, SRC-CLI-002. Type: constraint. Confidence: high. Status: accepted. Constraints: MVP不实现面向消费者的完整商城、支付或后台管理. Acceptance candidate: 给定任一实验，业务请求可解释为商品查询或模拟订单，且系统没有完整商城流程。"
+    },
+    {
+      "id": "R6",
+      "description": "系统应仅允许管理员预创建的测试账号登录。",
+      "input_fields": [
+        "username",
+        "password"
+      ],
+      "data_ranges": [],
+      "conditions": [
+        "账号存在且未禁用",
+        "凭据有效"
+      ],
+      "expected_actions": [
+        "系统创建认证会话并返回用户身份。"
+      ],
+      "notes": "Title: 预创建账号登录. Source: SRC-CLI-002. Type: functional. Confidence: high. Status: accepted. Constraints: MVP不得提供公开注册入口. Acceptance candidate: 给定有效测试账号，登录成功；页面和API均不存在公开注册能力。"
+    },
+    {
+      "id": "R7",
+      "description": "所有实验操作应校验登录状态、实验归属和目标实例归属。",
+      "input_fields": [
+        "labId",
+        "instanceId"
+      ],
+      "data_ranges": [],
+      "conditions": [
+        "用户请求读取或修改实验"
+      ],
+      "expected_actions": [
+        "系统仅允许资源所有者执行操作。"
+      ],
+      "notes": "Title: 实验鉴权与归属. Source: SRC-CLI-002. Type: functional. Confidence: high. Status: accepted. Constraints: 用户不得查看或操作其他账号的实验资源. Acceptance candidate: 给定用户提交其他会话的实例ID，系统拒绝请求且不改变目标资源。"
+    },
+    {
+      "id": "R8",
+      "description": "认证会话应使用服务端随机令牌和HttpOnly、SameSite=Strict Cookie，并保护状态变更请求免受CSRF。",
+      "input_fields": [
+        "sessionCookie",
+        "csrfToken"
+      ],
+      "data_ranges": [],
+      "conditions": [
+        "用户执行需要认证的状态变更"
+      ],
+      "expected_actions": [
+        "系统验证会话和CSRF令牌后才处理请求。"
+      ],
+      "notes": "Title: 会话与CSRF保护. Source: SRC-CLI-002. Type: non_functional. Confidence: high. Status: accepted. Constraints: 当前HTTP部署无法设置Secure Cookie; 令牌不得进入URL或日志. Acceptance candidate: 给定缺少或错误CSRF令牌的状态变更请求，系统拒绝操作。"
+    },
+    {
+      "id": "R9",
+      "description": "系统应持久化课程浏览进度和精简实验操作摘要。",
+      "input_fields": [
+        "courseId",
+        "labId",
+        "actionType"
+      ],
+      "data_ranges": [],
+      "conditions": [
+        "已登录用户浏览课程或执行实验操作"
+      ],
+      "expected_actions": [
+        "系统更新最近访问时间、浏览状态和操作摘要。"
+      ],
+      "notes": "Title: 学习进度与摘要. Source: SRC-CLI-002. Type: functional. Confidence: high. Status: accepted. Constraints: 不得保存实验容器快照、大量逐请求日志、分数或排名. Acceptance candidate: 给定用户结束实验后重新登录，系统显示浏览进度，但不会恢复原容器拓扑。"
+    },
+    {
+      "id": "R10",
+      "description": "每个账号同时最多拥有一个活动实验。",
+      "input_fields": [
+        "userId"
+      ],
+      "data_ranges": [
+        "activeLabCount: 0..1"
+      ],
+      "conditions": [
+        "用户请求创建实验"
+      ],
+      "expected_actions": [
+        "已有活动实验时系统拒绝创建第二个实验。"
+      ],
+      "notes": "Title: 单活动实验. Source: SRC-CLI-002. Type: business_rule. Confidence: high. Status: accepted. Constraints: Preparing、Running、Expiring和Terminating均视为活动状态. Acceptance candidate: 给定账号已有活动实验，再次创建时返回LAB_ALREADY_ACTIVE。"
+    },
+    {
+      "id": "R11",
+      "description": "实验应按照Preparing、Running、Expiring、Failed、Terminating和Terminated状态管理。",
+      "input_fields": [
+        "labId"
+      ],
+      "data_ranges": [],
+      "conditions": [
+        "实验被创建、运行、过期、失败或结束"
+      ],
+      "expected_actions": [
+        "系统按合法状态转换更新实验及资源。"
+      ],
+      "notes": "Title: 实验生命周期. Source: SRC-CLI-002. Type: functional. Confidence: high. Status: accepted. Constraints: 状态转换必须由后端控制并可审计. Acceptance candidate: 给定实验创建成功，状态进入Running；失败时进入Failed并启动清理。"
+    },
+    {
+      "id": "R12",
+      "description": "实验空闲10分钟或总时长达到30分钟时应自动结束。",
+      "input_fields": [
+        "lastEffectiveActionAt",
+        "startedAt"
+      ],
+      "data_ranges": [
+        "idleTimeout: 10 minutes",
+        "maxLifetime: 30 minutes"
+      ],
+      "conditions": [
+        "实验处于Running或Expiring"
+      ],
+      "expected_actions": [
+        "系统提醒用户并在超时后进入Terminating。"
+      ],
+      "notes": "Title: 自动超时回收. Source: SRC-CLI-002. Type: business_rule. Confidence: high. Status: accepted. Constraints: SSE心跳、页面刷新和只读浏览不得刷新空闲计时. Acceptance candidate: 给定实验持续无有效操作10分钟或运行满30分钟，系统自动清理实验。"
+    },
+    {
+      "id": "R13",
+      "description": "用户应能一键重置或主动结束自己的活动实验。",
+      "input_fields": [
+        "labId",
+        "operationId"
+      ],
+      "data_ranges": [],
+      "conditions": [
+        "实验属于当前用户且处于可操作状态"
+      ],
+      "expected_actions": [
+        "系统重建初始状态或终止实验。"
+      ],
+      "notes": "Title: 重置与主动结束. Source: SRC-CLI-002. Type: functional. Confidence: high. Status: accepted. Constraints: 重置必须恢复场景初始拓扑; 结束必须清理所有会话资源. Acceptance candidate: 给定被修改的实验，重置后拓扑恢复；结束后容器、网络和动态路由被删除。"
+    },
+    {
+      "id": "R14",
+      "description": "实验容器、网络、Redis及高频运行状态应为临时资源。",
+      "input_fields": [],
+      "data_ranges": [],
+      "conditions": [
+        "实验结束、失败或过期"
+      ],
+      "expected_actions": [
+        "系统删除运行资源，仅保留必要摘要。"
+      ],
+      "notes": "Title: 临时运行状态. Source: SRC-CLI-002. Type: constraint. Confidence: high. Status: accepted. Constraints: 下次登录不得恢复已销毁的容器拓扑. Acceptance candidate: 给定实验已终止，Docker中不存在对应会话的活动临时资源。"
+    },
+    {
+      "id": "R15",
+      "description": "系统应提供一个用户专属Go应用容器连接共享MySQL的应用与数据分离实验。",
+      "input_fields": [
+        "scenarioId"
+      ],
+      "data_ranges": [],
+      "conditions": [
+        "已登录用户启动该实验"
+      ],
+      "expected_actions": [
+        "系统创建应用容器、实验网络和数据库访问配置。"
+      ],
+      "notes": "Title: 应用与数据分离实验. Source: SRC-CLI-001, SRC-CLI-002. Type: functional. Confidence: high. Status: accepted. Constraints: 实验数据必须按sessionId隔离. Acceptance candidate: 给定实验启动成功，商品查询真实经过应用容器访问共享MySQL。"
+    },
+    {
+      "id": "R16",
+      "description": "负载均衡实验应从一台临时Go应用实例开始，并通过内部Nginx转发请求。",
+      "input_fields": [
+        "scenarioId"
+      ],
+      "data_ranges": [
+        "initialAppInstances: 1"
+      ],
+      "conditions": [
+        "已登录用户启动负载均衡实验"
+      ],
+      "expected_actions": [
+        "系统创建初始实例并注册内部upstream。"
+      ],
+      "notes": "Title: 负载均衡实验初始拓扑. Source: SRC-CLI-001, SRC-CLI-002. Type: functional. Confidence: high. Status: accepted. Constraints: 实验Nginx应与公网入口Nginx分离. Acceptance candidate: 给定实验启动成功，真实请求由内部Nginx转发至初始实例。"
+    },
+    {
+      "id": "R17",
+      "description": "用户应能按预设操作增加应用实例，单实验最多四台。",
+      "input_fields": [
+        "labId",
+        "operationId"
+      ],
+      "data_ranges": [
+        "appInstanceCount: 1..4"
+      ],
+      "conditions": [
+        "实验运行中",
+        "平台资源充足"
+      ],
+      "expected_actions": [
+        "系统创建实例、健康检查通过后加入upstream。"
+      ],
+      "notes": "Title: 增加应用实例. Source: SRC-CLI-001, SRC-CLI-002. Type: functional. Confidence: high. Status: accepted. Constraints: 镜像、网络和资源规格由后端模板固定. Acceptance candidate: 给定实例数少于四且容量允许，扩容后新实例可处理真实请求。"
+    },
+    {
+      "id": "R18",
+      "description": "用户应能删除指定应用实例，但集群最低保留一台。",
+      "input_fields": [
+        "instanceId",
+        "operationId"
+      ],
+      "data_ranges": [
+        "remainingAppInstances: >= 1"
+      ],
+      "conditions": [
+        "目标实例属于当前实验"
+      ],
+      "expected_actions": [
+        "系统安全删除目标容器并更新拓扑。"
+      ],
+      "notes": "Title: 删除指定实例. Source: SRC-CLI-002. Type: functional. Confidence: high. Status: accepted. Constraints: 删除前必须从upstream摘除并短暂排空请求. Acceptance candidate: 给定集群有两台以上实例，指定实例可删除；只剩一台时返回MIN_INSTANCE_LIMIT。"
+    },
+    {
+      "id": "R19",
+      "description": "用户应能选择实例并将性能保留比例设置为20%至100%。",
+      "input_fields": [
+        "instanceId",
+        "performancePercent"
+      ],
+      "data_ranges": [
+        "performancePercent: 20..100, step 10"
+      ],
+      "conditions": [
+        "目标实例属于当前运行实验"
+      ],
+      "expected_actions": [
+        "系统更新CPU限制、容量、指标和前端状态。"
+      ],
+      "notes": "Title: 动态降低实例性能. Source: SRC-CLI-002. Type: functional. Confidence: high. Status: accepted. Constraints: 后端必须真实修改Docker CPU配额并同步教学等效容量. Acceptance candidate: 给定app-3设置为30%，Docker配额和有效容量均反映30%的保留性能。"
+    },
+    {
+      "id": "R20",
+      "description": "用户应能将指定实例恢复为场景初始性能。",
+      "input_fields": [
+        "instanceId"
+      ],
+      "data_ranges": [],
+      "conditions": [
+        "实例性能低于初始值"
+      ],
+      "expected_actions": [
+        "系统恢复Docker配额和有效容量。"
+      ],
+      "notes": "Title: 恢复实例性能. Source: SRC-CLI-002. Type: functional. Confidence: high. Status: accepted. Constraints: 恢复后不得超过场景模板定义的上限. Acceptance candidate: 给定降级实例执行恢复，性能比例回到100%且指标随之更新。"
+    },
+    {
+      "id": "R21",
+      "description": "固定权重模式下，实例性能变化不得自动修改Nginx权重。",
+      "input_fields": [
+        "balancingMode"
+      ],
+      "data_ranges": [
+        "balancingMode: fixed"
+      ],
+      "conditions": [
+        "用户选择固定模式"
+      ],
+      "expected_actions": [
+        "Nginx继续使用当前权重，允许用户观察不均衡。"
+      ],
+      "notes": "Title: 固定权重模式. Source: SRC-CLI-002. Type: functional. Confidence: high. Status: accepted. Constraints: 系统仍需更新容量、负载和过载指标. Acceptance candidate: 给定固定模式下实例降级，权重不变且该实例可能出现过载。"
+    },
+    {
+      "id": "R22",
+      "description": "用户应能通过引导式控件调整允许范围内的实例权重。",
+      "input_fields": [
+        "instanceWeights"
+      ],
+      "data_ranges": [
+        "weight: positive integer within configured limit"
+      ],
+      "conditions": [
+        "实验处于固定权重模式"
+      ],
+      "expected_actions": [
+        "系统生成、校验并应用新的upstream权重。"
+      ],
+      "notes": "Title: 预设权重调整. Source: SRC-CLI-002. Type: functional. Confidence: high. Status: accepted. Constraints: 用户不得提交原始Nginx配置文本. Acceptance candidate: 给定合法权重组合，nginx配置校验通过后真实请求比例逐步变化。"
+    },
+    {
+      "id": "R23",
+      "description": "用户应能开启或关闭自适应负载均衡模式。",
+      "input_fields": [
+        "balancingMode"
+      ],
+      "data_ranges": [
+        "balancingMode: fixed|adaptive"
+      ],
+      "conditions": [
+        "负载均衡实验运行中"
+      ],
+      "expected_actions": [
+        "系统启动或停止自适应控制循环。"
+      ],
+      "notes": "Title: 自适应模式切换. Source: SRC-CLI-002. Type: functional. Confidence: high. Status: accepted. Constraints: 只有adaptive模式允许控制器持续更新权重. Acceptance candidate: 给定用户开启adaptive，后端开始按容量调整；关闭后权重保持最后有效值。"
+    },
+    {
+      "id": "R24",
+      "description": "自适应控制器应根据实例有效容量和稳定负载指标计算并应用权重。",
+      "input_fields": [
+        "effectiveCapacity",
+        "loadMetrics"
+      ],
+      "data_ranges": [
+        "sampleInterval: 2 seconds",
+        "targetConvergence: <= 10 seconds normally"
+      ],
+      "conditions": [
+        "自适应模式开启",
+        "指标连续达到调整条件"
+      ],
+      "expected_actions": [
+        "系统生成配置、执行nginx -t并优雅重载。"
+      ],
+      "notes": "Title: 自适应权重控制. Source: SRC-CLI-002. Type: functional. Confidence: high. Status: accepted. Constraints: 必须使用平滑、持续阈值和冷却时间避免频繁重载. Acceptance candidate: 给定容量100、100、30且状态稳定，权重应趋近10、10、3并通过配置校验。"
+    },
+    {
+      "id": "R25",
+      "description": "实验流量应以低实际速率真实经过内部Nginx并由应用实例处理。",
+      "input_fields": [
+        "trafficLevel",
+        "scenarioId"
+      ],
+      "data_ranges": [
+        "actualRequestRate: configured low rate"
+      ],
+      "conditions": [
+        "用户触发流量"
+      ],
+      "expected_actions": [
+        "实例响应instanceId和requestId，平台记录实际路由结果。"
+      ],
+      "notes": "Title: 真实请求分配. Source: SRC-CLI-001, SRC-CLI-002. Type: functional. Confidence: high. Status: accepted. Constraints: 前端动画不得自行随机决定处理实例. Acceptance candidate: 给定一批流量，每个请求的展示路径可由实际响应中的instanceId证明。"
+    },
+    {
+      "id": "R26",
+      "description": "后端应按相对负载计算空闲、正常、高负载、过载和不可用状态。",
+      "input_fields": [
+        "assignedEquivalentLoad",
+        "effectiveCapacity",
+        "health"
+      ],
+      "data_ranges": [
+        "idle: 0..30%",
+        "normal: >30..70%",
+        "high: >70..100%",
+        "overloaded: >100%"
+      ],
+      "conditions": [
+        "实例存在且有容量或健康指标"
+      ],
+      "expected_actions": [
+        "系统推送loadRatio、status和相关计数。"
+      ],
+      "notes": "Title: 实例负载状态. Source: SRC-CLI-002. Type: functional. Confidence: high. Status: accepted. Constraints: 前端颜色和效果应仅消费后端状态数据. Acceptance candidate: 给定相对负载超过100%，实例状态为overloaded；健康检查失败时为unavailable。"
+    },
+    {
+      "id": "R27",
+      "description": "实例等效负载超过有效容量时应产生可观察的模拟订单丢失。",
+      "input_fields": [
+        "batchSize",
+        "remainingCapacity"
+      ],
+      "data_ranges": [
+        "droppedOrders: >= 0"
+      ],
+      "conditions": [
+        "请求批次超过当前周期剩余有效容量"
+      ],
+      "expected_actions": [
+        "应用返回received、processed、dropped和overloaded。"
+      ],
+      "notes": "Title: 过载订单丢失. Source: SRC-CLI-002. Type: functional. Confidence: high. Status: accepted. Constraints: 不得通过真实压满CPU制造效果; 丢失订单不得写入MySQL明细. Acceptance candidate: 给定容量6且批次20，响应显示处理6、丢失14并推送过载事件。"
+    },
+    {
+      "id": "R28",
+      "description": "系统应解释仅靠权重无法解决总负载过低或超过集群总容量的问题。",
+      "input_fields": [
+        "totalLoad",
+        "totalCapacity"
+      ],
+      "data_ranges": [],
+      "conditions": [
+        "集群利用率超出合理范围"
+      ],
+      "expected_actions": [
+        "系统展示缩容、扩容、恢复性能或降低流量等原因说明。"
+      ],
+      "notes": "Title: 集群容量边界说明. Source: SRC-CLI-002. Type: functional. Confidence: high. Status: accepted. Constraints: 自由探索模式不得给出评分或唯一标准答案. Acceptance candidate: 给定总负载超过总容量，页面明确显示调整权重仍会存在订单丢失。"
+    },
+    {
+      "id": "R29",
+      "description": "缓存实验应创建一至三个应用容器、一个会话专属Redis并连接共享MySQL。",
+      "input_fields": [
+        "scenarioId"
+      ],
+      "data_ranges": [
+        "appInstanceCount: 1..3",
+        "redisInstanceCount: 1"
+      ],
+      "conditions": [
+        "已登录用户启动缓存实验"
+      ],
+      "expected_actions": [
+        "系统创建完整的L1、L2和数据库访问链路。"
+      ],
+      "notes": "Title: 缓存实验拓扑. Source: SRC-CLI-002. Type: functional. Confidence: high. Status: accepted. Constraints: Redis和应用容器必须位于会话实验网络. Acceptance candidate: 给定缓存实验运行，商品查询可以依次访问应用L1、会话Redis和共享MySQL。"
+    },
+    {
+      "id": "R30",
+      "description": "商品查询应按照进程内L1、Redis L2、MySQL的顺序命中或回源。",
+      "input_fields": [
+        "productId"
+      ],
+      "data_ranges": [],
+      "conditions": [
+        "用户发送商品详情查询"
+      ],
+      "expected_actions": [
+        "命中后返回数据；未命中时回源并回填缓存。"
+      ],
+      "notes": "Title: 基础多级缓存链路. Source: SRC-CLI-002. Type: functional. Confidence: high. Status: accepted. Constraints: 每次请求必须记录实际经过的缓存层. Acceptance candidate: 给定冷缓存首次查询访问MySQL，后续查询可命中Redis或L1。"
+    },
+    {
+      "id": "R31",
+      "description": "商品数据更新后应删除Redis缓存并通过Redis Pub/Sub使各实例L1失效。",
+      "input_fields": [
+        "productId",
+        "newVersion"
+      ],
+      "data_ranges": [],
+      "conditions": [
+        "用户修改样例商品"
+      ],
+      "expected_actions": [
+        "系统更新MySQL、删除L2并广播L1失效事件。"
+      ],
+      "notes": "Title: 多实例缓存失效. Source: SRC-CLI-002. Type: functional. Confidence: high. Status: accepted. Constraints: 页面应展示各实例缓存版本. Acceptance candidate: 给定多实例缓存旧版本，更新后各实例最终删除旧L1并读取新版本。"
+    },
+    {
+      "id": "R32",
+      "description": "系统应支持不存在商品查询，并允许切换参数校验、空值缓存和布隆过滤器。",
+      "input_fields": [
+        "invalidProductIds",
+        "protectionOptions"
+      ],
+      "data_ranges": [],
+      "conditions": [
+        "用户触发缓存穿透场景"
+      ],
+      "expected_actions": [
+        "系统统计无效查询、MySQL回源、空值命中和布隆拦截。"
+      ],
+      "notes": "Title: 缓存穿透实验. Source: SRC-CLI-002. Type: functional. Confidence: high. Status: accepted. Constraints: 实际请求数保持轻量. Acceptance candidate: 给定重复不存在ID，启用保护后MySQL回源次数低于未保护状态。"
+    },
+    {
+      "id": "R33",
+      "description": "系统应支持热点键立即过期，并允许切换singleflight、Redis互斥锁和提前续期。",
+      "input_fields": [
+        "hotProductId",
+        "protectionOptions"
+      ],
+      "data_ranges": [],
+      "conditions": [
+        "用户触发等效并发查询"
+      ],
+      "expected_actions": [
+        "系统展示缓存重建次数和数据库回源次数。"
+      ],
+      "notes": "Title: 缓存击穿实验. Source: SRC-CLI-002. Type: functional. Confidence: high. Status: accepted. Constraints: singleflight处理进程内合并，Redis锁协调多实例重建. Acceptance candidate: 给定热点键过期，启用保护后的重复重建次数明显减少。"
+    },
+    {
+      "id": "R34",
+      "description": "系统应支持有限样例键集中失效，并允许切换随机TTL、预热、回源限流和降级数据。",
+      "input_fields": [
+        "keyCount",
+        "protectionOptions"
+      ],
+      "data_ranges": [
+        "realKeyCount: 50..100"
+      ],
+      "conditions": [
+        "用户触发缓存雪崩场景"
+      ],
+      "expected_actions": [
+        "系统展示过期、回源、限流和降级统计。"
+      ],
+      "notes": "Title: 缓存雪崩实验. Source: SRC-CLI-002. Type: functional. Confidence: high. Status: accepted. Constraints: 页面可使用教学倍率，但必须标明实际键数. Acceptance candidate: 给定相同TTL键集中失效，启用随机TTL后回源峰值被分散。"
+    },
+    {
+      "id": "R35",
+      "description": "用户应能真实重启会话Redis并观察L1命中、MySQL回源或降级行为。",
+      "input_fields": [
+        "fallbackMode"
+      ],
+      "data_ranges": [],
+      "conditions": [
+        "缓存实验运行中"
+      ],
+      "expected_actions": [
+        "系统重启专属Redis并按当前策略处理请求。"
+      ],
+      "notes": "Title: Redis重启与回退. Source: SRC-CLI-002. Type: functional. Confidence: high. Status: accepted. Constraints: Redis故障不得影响其他用户. Acceptance candidate: 给定Redis不可用，L1未命中请求按选择回源或返回降级结果，恢复后可预热。"
+    },
+    {
+      "id": "R36",
+      "description": "会话Redis应禁用持久化、限制内存、不公开端口并在实验结束时销毁。",
+      "input_fields": [],
+      "data_ranges": [
+        "memoryLimit: default 48 MB"
+      ],
+      "conditions": [
+        "编排服务创建缓存实验Redis"
+      ],
+      "expected_actions": [
+        "系统按固定模板创建和清理Redis。"
+      ],
+      "notes": "Title: 临时Redis限制. Source: SRC-CLI-002. Type: constraint. Confidence: high. Status: accepted. Constraints: 禁止AOF和RDB; 仅加入会话网络. Acceptance candidate: 给定Redis容器运行，其无宿主机端口、无持久化且带会话与过期标签。"
+    },
+    {
+      "id": "R37",
+      "description": "实验只允许后端定义的引导式动作，不允许任意命令、配置或代码。",
+      "input_fields": [
+        "action",
+        "parameters"
+      ],
+      "data_ranges": [],
+      "conditions": [
+        "用户提交实验动作"
+      ],
+      "expected_actions": [
+        "系统执行允许动作或返回ACTION_NOT_ALLOWED。"
+      ],
+      "notes": "Title: 引导式操作白名单. Source: SRC-CLI-002. Type: constraint. Confidence: high. Status: accepted. Constraints: 场景动作必须位于白名单且参数满足范围. Acceptance candidate: 给定用户提交未知动作或原始Docker参数，平台和编排层均拒绝。"
+    },
+    {
+      "id": "R38",
+      "description": "Go平台后端应通过内部编排服务和受限Docker Socket代理管理实验资源。",
+      "input_fields": [
+        "validatedCommand"
+      ],
+      "data_ranges": [],
+      "conditions": [
+        "需要创建、修改或删除实验资源"
+      ],
+      "expected_actions": [
+        "编排服务根据固定模板调用必要的Docker API。"
+      ],
+      "notes": "Title: 受限内部编排. Source: SRC-CLI-002. Type: constraint. Confidence: high. Status: accepted. Constraints: 编排接口和Socket代理不得暴露到公网. Acceptance candidate: 给定公网请求，无法直接访问编排服务或Docker API。"
+    },
+    {
+      "id": "R39",
+      "description": "临时容器应采用非root、非特权、无宿主机挂载、只读根文件系统和会话网络隔离。",
+      "input_fields": [],
+      "data_ranges": [],
+      "conditions": [
+        "编排服务创建临时容器"
+      ],
+      "expected_actions": [
+        "系统应用CPU、内存、PID、capability和网络限制。"
+      ],
+      "notes": "Title: 容器与网络隔离. Source: SRC-CLI-002. Type: non_functional. Confidence: high. Status: accepted. Constraints: 容器不得访问Docker Socket或公开宿主机端口. Acceptance candidate: 给定任一实验容器，其检查结果符合固定安全模板且不能访问其他会话网络。"
+    },
+    {
+      "id": "R40",
+      "description": "系统应在创建资源前检查会话配额、全局临时容器上限和宿主机余量。",
+      "input_fields": [
+        "requestedResources"
+      ],
+      "data_ranges": [
+        "globalTemporaryContainers: <= 40",
+        "defaultAppMemory: 64 MB",
+        "defaultAppCpu: 0.1"
+      ],
+      "conditions": [
+        "用户请求创建或扩容"
+      ],
+      "expected_actions": [
+        "容量足够时创建；不足时返回RESOURCE_CAPACITY_EXCEEDED。"
+      ],
+      "notes": "Title: 资源配额与准入. Source: SRC-CLI-001, SRC-CLI-002. Type: non_functional. Confidence: high. Status: accepted. Constraints: 目标是在正常测试期间保留至少1 GB可用内存. Acceptance candidate: 给定达到全局上限，新的扩容请求被拒绝且不创建部分资源。"
+    },
+    {
+      "id": "R41",
+      "description": "状态变更应使用operationId实现幂等，并对同一实验的拓扑变更串行执行。",
+      "input_fields": [
+        "operationId"
+      ],
+      "data_ranges": [],
+      "conditions": [
+        "浏览器重试或并发提交实验动作"
+      ],
+      "expected_actions": [
+        "系统返回原结果或LAB_BUSY，不重复创建资源。"
+      ],
+      "notes": "Title: 幂等与串行拓扑变更. Source: SRC-CLI-002. Type: non_functional. Confidence: high. Status: accepted. Constraints: 同一operationId不得重复产生副作用. Acceptance candidate: 给定相同扩容请求重复提交，最终只新增一个实例。"
+    },
+    {
+      "id": "R42",
+      "description": "动态Nginx配置应由结构化数据生成，校验后原子替换并优雅重载。",
+      "input_fields": [
+        "upstreamModel"
+      ],
+      "data_ranges": [],
+      "conditions": [
+        "实例、权重或健康状态变化"
+      ],
+      "expected_actions": [
+        "系统执行nginx -t，成功后重载，失败时回滚。"
+      ],
+      "notes": "Title: 安全更新Nginx配置. Source: SRC-CLI-002. Type: non_functional. Confidence: high. Status: accepted. Constraints: 用户输入不得直接拼接到配置; 失败时保留上一份有效配置. Acceptance candidate: 给定无效生成配置，当前流量继续使用上一份有效upstream。"
+    },
+    {
+      "id": "R43",
+      "description": "MySQL应保存账号、进度、会话、实例清单和操作摘要，高频指标应使用有界内存缓冲。",
+      "input_fields": [
+        "event",
+        "summary"
+      ],
+      "data_ranges": [],
+      "conditions": [
+        "系统产生平台数据或实验事件"
+      ],
+      "expected_actions": [
+        "系统持久化低频数据并聚合高频数据。"
+      ],
+      "notes": "Title: 持久与高频数据分离. Source: SRC-CLI-002. Type: data_rule. Confidence: high. Status: accepted. Constraints: 不得逐条持久化模拟订单、缓存命中和指标采样. Acceptance candidate: 给定持续实验流量，MySQL记录量按摘要增长而非按每个等效订单增长。"
+    },
+    {
+      "id": "R44",
+      "description": "系统应通过SSE推送容器、请求、权重、负载、订单丢失、缓存和倒计时事件。",
+      "input_fields": [
+        "labId",
+        "lastEventId"
+      ],
+      "data_ranges": [
+        "normalEventDelay: <= 2 seconds"
+      ],
+      "conditions": [
+        "用户拥有活动实验"
+      ],
+      "expected_actions": [
+        "系统推送递增事件序号并支持有限补发。"
+      ],
+      "notes": "Title: SSE实时状态. Source: SRC-CLI-002. Type: functional. Confidence: high. Status: accepted. Constraints: 断线重连前应先获取完整状态快照. Acceptance candidate: 给定浏览器断线重连，页面先恢复快照，再继续接收新事件。"
+    },
+    {
+      "id": "R45",
+      "description": "系统应为认证、归属、配额、Docker、容器、Nginx、Redis、MySQL和实验状态错误返回稳定业务错误码。",
+      "input_fields": [],
+      "data_ranges": [],
+      "conditions": [
+        "操作无法安全完成"
+      ],
+      "expected_actions": [
+        "系统返回可识别错误码，且理论页面在实验基础设施故障时仍可用。"
+      ],
+      "notes": "Title: 稳定错误码与降级. Source: SRC-CLI-002. Type: functional. Confidence: high. Status: accepted. Constraints: 前端不得依赖解析内部错误字符串. Acceptance candidate: 给定Docker不可用，新实验返回DOCKER_UNAVAILABLE而理论内容仍可访问。"
+    },
+    {
+      "id": "R46",
+      "description": "实验创建失败、平台重启或会话过期时，系统应回滚或核对带平台标签的资源。",
+      "input_fields": [
+        "labId",
+        "resourceLabels"
+      ],
+      "data_ranges": [
+        "cleanupTarget: <= 60 seconds after termination normally"
+      ],
+      "conditions": [
+        "部分创建失败、平台启动或后台清理周期触发"
+      ],
+      "expected_actions": [
+        "系统删除孤儿容器、网络和无效动态路由并修复会话状态。"
+      ],
+      "notes": "Title: 失败回滚与资源核对. Source: SRC-CLI-002. Type: non_functional. Confidence: high. Status: accepted. Constraints: 清理器只能删除带平台实验标签的资源. Acceptance candidate: 给定创建到一半失败，已创建资源被反向清理且不会影响基础容器。"
+    },
+    {
+      "id": "R47",
+      "description": "MVP应支持最多10名同时在线测试用户，并满足已批准的轻量响应目标。",
+      "input_fields": [],
+      "data_ranges": [
+        "onlineUsers: <= 10",
+        "theoryPageP95: <= 2 seconds",
+        "ordinaryApiP95: <= 500 ms",
+        "labStartNormally: <= 15 seconds with images pre-pulled"
+      ],
+      "conditions": [
+        "运行在单台4核8G服务器",
+        "网络和基础服务正常"
+      ],
+      "expected_actions": [
+        "系统在资源准入范围内保持可用且避免宿主机OOM。"
+      ],
+      "notes": "Title: 容量与性能目标. Source: SRC-CLI-001, SRC-CLI-002. Type: non_functional. Confidence: high. Status: accepted. Constraints: 容器启动和Nginx重载不计入普通API目标. Acceptance candidate: 给定不超过10名测试用户，理论与普通API达到目标且宿主机不发生OOM。"
+    },
+    {
+      "id": "R48",
+      "description": "MVP应以桌面版Chrome、Edge和Firefox为主要客户端，并暂时通过公网IP和HTTP访问。",
+      "input_fields": [],
+      "data_ranges": [],
+      "conditions": [
+        "用户访问MVP"
+      ],
+      "expected_actions": [
+        "系统在支持的桌面浏览器提供完整实验能力。"
+      ],
+      "notes": "Title: 访问终端与部署约束. Source: SRC-CLI-001, SRC-CLI-002. Type: constraint. Confidence: high. Status: accepted. Constraints: 不要求手机端完整实验体验; HTTPS列为后续优先改进. Acceptance candidate: 给定受支持桌面浏览器，理论、登录、SSE和实验控制可正常使用。"
+    },
+    {
+      "id": "R49",
+      "description": "Vue、Nginx、Go、MySQL、Redis及平台内部服务均应以Docker容器方式部署。",
+      "input_fields": [],
+      "data_ranges": [],
+      "conditions": [
+        "系统构建和部署"
+      ],
+      "expected_actions": [
+        "系统通过容器编排启动基础服务并按需创建实验容器。"
+      ],
+      "notes": "Title: 容器化技术栈. Source: SRC-CLI-001. Type: constraint. Confidence: high. Status: accepted. Constraints: 后端使用Go，前端使用Vue，数据库使用MySQL，入口使用Nginx. Acceptance candidate: 给定部署清单，所有项目运行组件均有明确容器镜像和资源配置。"
+    },
+    {
+      "id": "R50",
+      "description": "MVP应提供命令行或初始化脚本管理测试账号并列出或强制清理实验。",
+      "input_fields": [
+        "adminCommand",
+        "userId",
+        "labId"
+      ],
+      "data_ranges": [],
+      "conditions": [
+        "管理员在服务器受信环境执行管理命令"
+      ],
+      "expected_actions": [
+        "管理员可创建、禁用、重置账号，列出实验并清理指定实验。"
+      ],
+      "notes": "Title: 命令行管理能力. Source: SRC-CLI-002. Type: functional. Confidence: high. Status: accepted. Constraints: 不得开发或公开管理员Web后台. Acceptance candidate: 给定管理员命令，可完成账号初始化和遗留实验清理，公网不存在管理页面。"
+    }
+  ]
+}
