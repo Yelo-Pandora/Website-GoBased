@@ -5,7 +5,6 @@
 * 基线日期：2026-07-11
 * 设计状态：已由用户批准
 * 实施状态：尚未开始
-* 目标仓库：Website-GoBased
 
 ## 1. 文档目的
 
@@ -14,20 +13,12 @@
 平台以网购请求为统一业务背景，通过真实但低负载的Docker容器、
 Nginx转发、Go服务、Redis和MySQL演示后端架构演进。
 
-当前仓库已有Go、Gin和MySQL实现的purchase CRUD骨架。
-该骨架作为应用与数据访问分层的实现基线，但不代表教学平台功能已完成。
-
 ## 2. 输入来源清单
 
 | 来源ID | 类型 | 定位 | 是否使用 | 用途 |
 | --- | --- | --- | --- | --- |
 | SRC-CLI-001 | user_input | 2026-07-10初始需求和架构图片 | 是 | 定义产品目标、强制技术栈、服务器限制、用户规模、Docker模拟模型和完整学习路线。 |
 | SRC-CLI-002 | user_input | 2026-07-10至2026-07-11澄清对话及已批准的七部分设计 | 是 | 定义MVP边界、隔离方式、教学交互、实验场景、生命周期、安全、接口和质量目标。 |
-| SRC-DOC-001 | local_file | README.md | 是 | 记录现有Go、Gin、MySQL purchase API骨架和当前分层。 |
-| SRC-CODE-001 | local_file | cmd/api/main.go; internal/app/server.go; internal/httpapi/router.go; internal/service/purchase_service.go | 是 | 确认现有实现仅为purchase CRUD API，尚无教学平台、Vue、Nginx、Docker编排、Redis或实验控制能力。 |
-
-明确排除的输入包括go.sum、编译产物、LICENSE和其他不表达产品需求的文件。
-Makefile仅描述当前开发命令，不作为新平台需求来源。
 
 ## 3. 产品目标
 
