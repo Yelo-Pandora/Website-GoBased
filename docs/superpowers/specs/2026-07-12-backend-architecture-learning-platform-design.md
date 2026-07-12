@@ -363,8 +363,87 @@ flowchart TB
 * `session_network_v1`
 * `lab_nginx_fragment_v1`
 * `lab_database_profile_v1`
+* `application_cluster_scenario_v1`
 
 模板固定镜像摘要、资源限制、健康检查、环境变量白名单、挂载规则、标签和网络策略。
+
+模板同时是实验初始值的唯一配置来源。
+模板名称包含版本号，例如 `app_container_v1`；已经启动的实验始终使用创建时选定的版本，后续新增 `v2` 不得静默改变运行中的实验。
+MVP 不增加 `scenario_settings` 表，也不允许用户长期保存任意模板变体。
+
+场景模板至少定义：
+
+* 基础 Docker CPU 配额和内存上限
+* 基础教学容量和容量时间窗
+* 初始性能百分比及允许调整范围
+* 初始 Nginx 权重
+* 订单批次大小和生成间隔
+* 超载策略、并发控制方式和队列开关
+* 商品种子数据
+
+场景模板引用资源模板，并集中给出该场景的教学初始值。
+`application_cluster_scenario_v1` 的示例如下。
+该示例是 SDS 规定的 MVP 默认值；它引用的资源模板负责固定实际镜像摘要和容器安全配置。
+
+~~~json
+{
+  "templateId": "application_cluster_scenario_v1",
+  "templateVersion": 1,
+  "scenarioType": "application_cluster",
+  "resourceTemplates": {
+    "application": "app_container_v1",
+    "database": "lab_database_profile_v1",
+    "network": "session_network_v1",
+    "nginxFragment": "lab_nginx_fragment_v1"
+  },
+  "resources": {
+    "baseCpuLimitCores": 0.1,
+    "memoryLimitMb": 128,
+    "pidsLimit": 64
+  },
+  "capacity": {
+    "baseCapacity": 100,
+    "capacityWindowMs": 1000,
+    "initialPerformancePercent": 100,
+    "minPerformancePercent": 20,
+    "maxPerformancePercent": 100
+  },
+  "loadBalancing": {
+    "initialWeight": 100
+  },
+  "orderSimulation": {
+    "defaultBatchSize": 60,
+    "defaultGenerationIntervalMs": 1000,
+    "processingDelayMs": 0,
+    "overloadPolicy": "drop_excess",
+    "queueMode": "disabled",
+    "concurrencyControl": "mutex",
+    "preserveArrivalOrder": false
+  },
+  "productSeeds": [
+    {
+      "id": 1,
+      "name": "Architecture Practice Laptop",
+      "category": "electronics",
+      "price": 6999.00,
+      "currency": "CNY",
+      "stockLabel": "in_stock",
+      "description": "Product used by the application cluster lab.",
+      "version": 1
+    },
+    {
+      "id": 2,
+      "name": "Distributed Systems Handbook",
+      "category": "books",
+      "price": 129.00,
+      "currency": "CNY",
+      "stockLabel": "in_stock",
+      "description": "Product used by cache and database labs.",
+      "version": 1
+    }
+  ]
+}
+~~~
 
 ## 7. 数据设计
 
@@ -437,6 +516,7 @@ erDiagram
         bigint user_id FK
         bigint course_id FK
         varchar scenario_type
+        varchar scenario_template_id
         varchar status
         varchar balancing_mode
         varchar mysql_db_name
@@ -528,7 +608,71 @@ erDiagram
     }
 ~~~
 
-### 7.4 被延后的数据能力
+`order_stats` 必须对 `(product_id, instance_name, time_bucket)` 建立复合唯一约束，保证并发聚合使用原子 upsert 而不是插入重复时间桶。
+
+### 7.4 初始值来源规则
+
+字段初始值分为以下五类：
+
+* 数据库生成：由自增主键、默认值或时间戳规则产生。
+* 模板产生：由创建实验时选定的不可变版本模板产生。
+* 系统生成：由平台、编排器或实验应用根据运行身份产生。
+* 运行时计算：根据模板值、用户动作或请求内容计算产生。
+* 请求产生：由流量生成器或用户请求携带。
+
+实验数据库不得为了记录来源而增加 `value_source` 一类字段。
+来源规则属于 SDS 和模板契约，由初始化、运行时逻辑和测试保证。
+
+#### 7.4.1 实验业务表字段来源
+
+| 表.字段 | 首次产生方式 | 初始值或规则 | 后续变化 |
+| --- | --- | --- | --- |
+| `products.id` | 模板产生 | 使用 `productSeeds[].id`，保证演示中商品 ID 稳定 | MVP 不变 |
+| `products.name` | 模板产生 | 使用商品种子名称 | 商品演示操作可更新 |
+| `products.category` | 模板产生 | 使用商品种子分类 | 商品演示操作可更新 |
+| `products.price` | 模板产生 | 使用商品种子价格 | 商品演示操作可更新 |
+| `products.currency` | 模板产生 | 默认模板值为 `CNY` | MVP 不变 |
+| `products.stock_label` | 模板产生 | 使用商品种子库存标签 | 商品演示操作可更新 |
+| `products.description` | 模板产生 | 使用商品种子说明 | 商品演示操作可更新 |
+| `products.version` | 模板产生 | 初始值为 `1` | 每次商品更新后递增 |
+| `products.updated_at` | 数据库生成 | 插入种子行时使用数据库当前时间 | 更新商品时自动刷新 |
+| `order_stats.id` | 数据库生成 | 自增主键 | 不变 |
+| `order_stats.product_id` | 请求产生 | 使用模拟订单批次中的商品 ID | 不变 |
+| `order_stats.instance_name` | 系统生成 | 使用实际接收请求的容器实例名 | 不变 |
+| `order_stats.time_bucket` | 运行时计算 | 按模板的 `capacityWindowMs` 对接收时间向下取整 | 不变 |
+| `order_stats.received_orders` | 运行时计算 | 首次聚合时为该批次订单数 | 同时间桶内累加 |
+| `order_stats.processed_orders` | 运行时计算 | 首次聚合时为容量内订单数 | 同时间桶内累加 |
+| `order_stats.dropped_orders` | 运行时计算 | 首次聚合时为超出容量的订单数 | 同时间桶内累加 |
+| `order_stats.updated_at` | 数据库生成 | 首次写入时使用数据库当前时间 | 每次聚合写入时自动刷新 |
+
+创建实验数据库时先建表并写入 `products` 模板种子数据。
+`order_stats` 初始为空，只在模拟订单实际到达后产生聚合记录。
+
+#### 7.4.2 实例容量字段来源
+
+`baseCapacity` 不属于实验数据库字段，也不在 `lab_instances` 中重复保存。
+它来自创建实验时选定的版本化模板，并表示一台实例在
+`performancePercent = 100` 时，每个 `capacityWindowMs` 能处理的教学等效订单数。
+
+| 值或字段 | 首次产生方式 | 初始值或规则 | 后续变化 |
+| --- | --- | --- | --- |
+| `baseCapacity` | 模板产生 | `application_cluster_scenario_v1` 为每秒 `100` 个教学等效订单 | 运行中的实验不变 |
+| `capacityWindowMs` | 模板产生 | `application_cluster_scenario_v1` 为 `1000` 毫秒 | 运行中的实验不变 |
+| `lab_sessions.scenario_template_id` | 系统生成 | 创建实验时记录所选模板 ID，MVP 默认 `application_cluster_scenario_v1` | 不变 |
+| `lab_instances.performance_percent` | 模板产生 | `initialPerformancePercent`，MVP 为 `100` | 用户可在 `20` 至 `100` 间调整 |
+| `lab_instances.cpu_limit_cores` | 运行时计算 | `baseCpuLimitCores * performancePercent / 100` | 性能调整成功后更新 |
+| `lab_instances.memory_limit_mb` | 模板产生 | `memoryLimitMb`，MVP 为 `128` | MVP 不随性能调整变化 |
+| `lab_instances.effective_capacity` | 运行时计算 | `baseCapacity * performancePercent / 100` | 性能调整成功后更新 |
+| `lab_instances.current_weight` | 模板或控制器产生 | 固定模式初始为 `initialWeight`；自适应模式由控制器计算 | 自适应控制循环可更新 |
+| `lab_instances.instance_name` | 系统生成 | 在实验内按创建顺序生成稳定名称 | 不变 |
+| `lab_instances.container_id` | 系统生成 | Docker 创建容器后返回 | 容器重建时更新 |
+| `lab_instances.status` | 系统生成 | 创建时为 `provisioning`，健康检查通过后为 `running` | 随生命周期变化 |
+
+实例恢复默认性能时恢复到模板的 `initialPerformancePercent`，而不是恢复到用户最近一次设置的值。
+模板升级必须使用新的模板版本，不能改变现有实验读取到的 `baseCapacity`、容量时间窗或资源基线。
+平台通过 `lab_sessions.scenario_template_id` 重新定位运行实验使用的不可变模板。
+
+### 7.5 被延后的数据能力
 
 MVP 延后以下表：
 
@@ -540,7 +684,7 @@ MVP 延后以下表：
 
 对应的历史审计、运行回放、版本历史和长期场景参数保存不属于首版核心目标。
 
-### 7.5 lab_resources
+### 7.6 lab_resources
 
 `lab_resources` 记录非模拟服务器资源：
 
@@ -574,6 +718,9 @@ MySQL 使用“共享容器 + 每实验独立数据库与账号”方案。
 * `destroy_lab_database`
 
 存储过程负责命名校验、建库、建账号、授权、初始化表和清理资源。
+初始化表后，存储过程使用本次实验选定模板的 `productSeeds` 写入 `products`。
+模板种子写入必须具备幂等性；相同实验的重试不得产生重复商品。
+`order_stats` 不写入模板行，建库和重置完成后该表为空。
 
 ### 8.3 权限原则
 
@@ -651,7 +798,44 @@ flowchart TB
 * `GET /healthz`
 * `GET /internal/products/:id`
 * `POST /internal/order-batch`
+* `PUT /internal/runtime-capacity`
 * `GET /internal/runtime-state`
+
+### 9.5 MVP 订单模拟执行模型
+
+每个应用服务器容器在进程内维护自己的当前容量时间窗、剩余教学容量和聚合计数。
+该状态不在不同容器之间共享；请求实际被 Nginx 分配到哪个容器，就消耗哪个容器的容量。
+
+`POST /internal/order-batch` 采用同步、无队列处理：
+
+1. 校验商品 ID 和批次订单数。
+2. 获取该容器订单容量状态的进程内互斥锁。
+3. 根据接收时间切换或复用当前容量时间窗。
+4. 在锁内计算可处理数和丢失数，并一次性扣减剩余容量。
+5. 更新内存聚合计数后释放互斥锁。
+6. 释放锁后，对 `order_stats` 执行基于复合唯一键的原子 upsert，再将当前批次结果返回给调用方。
+
+互斥锁只保证同一容器内并发请求不会重复扣减容量或覆盖计数。
+互斥锁不保证公平性，也不保证并发请求严格按照到达时间取得处理资格。
+MVP 不创建进程内请求队列，不引入 Kafka、RabbitMQ 或 Redis Stream，不重试被丢弃订单，也不使用消息队列维持订单先后顺序。
+这里延后的只是模拟订单请求队列，不影响平台控制面继续使用第 5.5 节定义的 MySQL 持久化操作队列。
+
+`processingDelayMs` 在 MVP 固定为 `0`。
+“已处理”表示订单获得教学容量并完成记账模拟，不表示容器为每个订单执行真实耗时计算或休眠。
+这种设计保证演示负载可见，但不会为了制造高负载而真实压满 4 核 8 GB 宿主机。
+
+### 9.6 未来实现：请求排队模型
+
+以下能力明确延后，不属于 MVP：
+
+* 每容器有界请求队列
+* 工作协程池和非零订单服务时间
+* 排队等待超时和队列满拒绝策略
+* 严格到达顺序或显式顺序号
+* 失败重试、幂等消费和容器删除前排空
+
+未来实现前必须另行确定队列容量、工作协程数、服务时间分布、等待超时和顺序语义。
+MVP 不预留空表或空容器，只保留模板字段和接口兼容空间。
 
 ## 10. 缓存设计
 
@@ -709,6 +893,13 @@ flowchart TB
 
 `effectiveCapacity = baseCapacity * performancePercent / 100`
 
+其中：
+
+* `baseCapacity` 来自创建实验时选定的版本化模板。
+* `performancePercent` 初始来自模板的 `initialPerformancePercent`，MVP 为 `100`。
+* `effectiveCapacity` 的单位是每个 `capacityWindowMs` 可处理的教学等效订单数。
+* `application_cluster_scenario_v1` 默认时间窗为 `1000` 毫秒，因此初始有效容量为每秒 `100` 个教学等效订单。
+
 每个订单批次按当前时间桶剩余容量处理：
 
 * `received = batchSize`
@@ -716,7 +907,34 @@ flowchart TB
 * `dropped = received - processable`
 * `remainingCapacity = max(0, remainingCapacity - processable)`
 
-### 11.3 状态判定
+若一个批次只有部分订单落在剩余容量内，容量内部分记为 `processed`，超出部分全部记为 `dropped`。
+若剩余容量为零，则该批次的所有订单立即丢弃。
+丢弃是最终结果，不进入等待队列，也不在后续时间窗补处理。
+
+每个新时间窗开始时：
+
+`remainingCapacity = effectiveCapacity`
+
+时间窗切换、容量扣减和计数更新必须在同一进程内互斥临界区中完成。
+互斥临界区只执行常数时间的状态计算，不得包含数据库写入、网络调用或人为延迟。
+
+### 11.3 真实资源与教学容量同步
+
+模板定义 `baseCpuLimitCores`、`baseCapacity` 和初始性能比例。
+实例创建时同时计算并应用：
+
+* `cpuLimitCores = baseCpuLimitCores * performancePercent / 100`
+* `effectiveCapacity = baseCapacity * performancePercent / 100`
+
+性能调整操作只有在 Docker CPU quota 修改成功后，才提交新的
+`performance_percent`、`cpu_limit_cores` 和 `effective_capacity` 平台快照。
+编排器随后通过实验应用的受控内部配置入口更新容器内存中的 `performancePercent` 和 `effectiveCapacity`。
+如果容器内配置更新失败，操作不得报告成功，并由 Worker 重试或执行补偿，使 Docker 配额、平台快照和容器教学容量最终一致。
+
+运行中的容器不得自行猜测 `baseCapacity`，也不得从实时 CPU 使用率反推教学容量。
+实际 CPU 指标只用于展示和诊断，教学容量始终由模板基线与性能比例确定。
+
+### 11.4 状态判定
 
 `loadRatio = assignedEquivalentLoad / effectiveCapacity`
 
@@ -796,9 +1014,10 @@ sequenceDiagram
 1. 用户选择实例和 20%-100% 的性能比例。
 2. Worker 调用 `UPDATE_APP_CAPACITY`。
 3. 编排器真实修改 Docker CPU quota。
-4. 平台更新有效容量。
-5. 固定模式不改权重。
-6. 自适应模式等待下一次控制循环重新计算。
+4. 编排器更新目标容器的教学容量配置。
+5. 平台提交性能比例、CPU 配额和有效容量快照。
+6. 固定模式不改权重。
+7. 自适应模式等待下一次控制循环重新计算。
 
 ### 13.4 删除实例
 
@@ -905,6 +1124,8 @@ L1 未命中时按当前策略回源或返回降级结果。
 * 实验状态机
 * 操作幂等和租约
 * 容量与订单丢失计算
+* 容量时间窗切换和并发互斥一致性
+* 模板初始值映射和容量派生计算
 * 自适应权重算法
 * 缓存策略
 * Nginx 片段渲染
@@ -920,6 +1141,8 @@ L1 未命中时按当前策略回源或返回降级结果。
 * MySQL 存储过程
 * Nginx 配置校验与 reload
 * 商品查询与缓存失效
+* 超载订单立即丢弃且不跨时间窗补处理
+* Docker CPU 配额、平台快照和容器教学容量同步
 * Redis 重启和回退
 
 ### 17.3 端到端测试
@@ -931,6 +1154,7 @@ L1 未命中时按当前策略回源或返回降级结果。
 * 扩容、缩容与性能调整
 * 固定和自适应负载均衡
 * 订单丢失
+* 并发订单批次下无重复扣减和无计数覆盖
 * 缓存穿透、击穿和雪崩
 * Redis 重启
 * 实验重置、主动结束和超时回收
@@ -950,6 +1174,8 @@ L1 未命中时按当前策略回源或返回降级结果。
 * 控制面采用模块化单体，降低常驻资源开销。
 * 高权限能力集中在独立编排器，缩小攻击面。
 * 使用真实 cgroup 限制与教学等效负载，不真实打满宿主机。
+* MVP 订单模拟使用每容器互斥容量计数，超载订单立即丢弃且不进入队列。
+* 请求队列、严格顺序、非零处理耗时和重试保留为未来实现。
 * 共享 MySQL 中每实验独立数据库和临时账号。
 * 使用精简数据模型，优先保证运行、回收和恢复。
 * 共享实验 Nginx 使用每实验独立片段和全局串行 reload。
