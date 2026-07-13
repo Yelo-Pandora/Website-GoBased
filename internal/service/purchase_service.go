@@ -9,9 +9,11 @@ import (
 	"website-gobased/internal/repository"
 )
 
+// 预定义错误变量，用于表示无效的购买输入和状态。
 var ErrInvalidPurchaseInput = errors.New("invalid purchase input")
 var ErrInvalidPurchaseState = errors.New("invalid purchase status")
 
+// 允许的购买状态集合，用于验证输入的状态是否合法。
 var allowedStatuses = map[string]struct{}{
 	"pending":   {},
 	"paid":      {},

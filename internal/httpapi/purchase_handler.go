@@ -21,10 +21,12 @@ type PurchaseService interface {
 	Delete(context.Context, int64) error
 }
 
+// PurchaseHandler 处理购买相关的 HTTP 请求，内置了 PurchaseService 接口，用于处理购买相关的业务逻辑。
 type PurchaseHandler struct {
 	purchaseService PurchaseService
 }
 
+// createPurchaseRequest 用于解析创建购买请求的 JSON 数据。
 type createPurchaseRequest struct {
 	UserID      int64   `json:"user_id"`
 	ProductID   int64   `json:"product_id"`
@@ -34,14 +36,17 @@ type createPurchaseRequest struct {
 	Status      string  `json:"status"`
 }
 
+// updatePurchaseStatusRequest 用于解析更新购买状态请求的 JSON 数据。
 type updatePurchaseStatusRequest struct {
 	Status string `json:"status"`
 }
 
+// NewPurchaseHandler 创建一个新的 PurchaseHandler 实例，接收一个实现了 PurchaseService 接口的服务对象。
 func NewPurchaseHandler(purchaseService PurchaseService) *PurchaseHandler {
 	return &PurchaseHandler{purchaseService: purchaseService}
 }
 
+// List 处理获取所有购买记录的 HTTP 请求。
 func (h *PurchaseHandler) List(c *gin.Context) {
 	purchases, err := h.purchaseService.List(c.Request.Context())
 	if err != nil {
@@ -52,6 +57,7 @@ func (h *PurchaseHandler) List(c *gin.Context) {
 	c.JSON(http.StatusOK, purchases)
 }
 
+// Create 处理创建购买记录的 HTTP 请求。
 func (h *PurchaseHandler) Create(c *gin.Context) {
 	var req createPurchaseRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
