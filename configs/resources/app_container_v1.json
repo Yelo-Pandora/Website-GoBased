@@ -1,0 +1,25 @@
+{
+  "templateId": "app_container_v1",
+  "templateVersion": 1,
+  "resourceType": "container",
+  "imageEnv": "LAB_APP_IMAGE",
+  "user": "10001:10001",
+  "readOnlyRootFilesystem": true,
+  "privileged": false,
+  "capDrop": ["ALL"],
+  "memoryLimitMb": 128,
+  "pidsLimit": 64,
+  "healthcheck": {
+    "path": "/healthz",
+    "port": 8080,
+    "intervalSeconds": 5,
+    "timeoutSeconds": 2,
+    "retries": 10
+  },
+  "modules": [
+    "product-read",
+    "order-sim",
+    "metrics-export",
+    "health"
+  ]
+}

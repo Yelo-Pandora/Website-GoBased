@@ -10,6 +10,9 @@
 
 # Build output
 bin/
+dist/
+web/dist/
+web/node_modules/
 
 # Test binary, built with `go test -c`
 *.test
@@ -30,6 +33,10 @@ go.work.sum
 .env
 .env.*
 !.env.example
+
+# Local runtime data
+runtime/
+*.pid
 
 # IDE and editor directories
 .idea/

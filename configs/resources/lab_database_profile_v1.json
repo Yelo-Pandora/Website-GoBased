@@ -1,0 +1,10 @@
+{
+  "templateId": "lab_database_profile_v1",
+  "templateVersion": 1,
+  "resourceType": "database",
+  "databaseNamePattern": "lab_{normalizedLabId}",
+  "userNamePattern": "lab_{normalizedLabId}_user",
+  "provisionProcedure": "platform.provision_lab_database",
+  "resetProcedure": "platform.reset_lab_database",
+  "destroyProcedure": "platform.destroy_lab_database"
+}

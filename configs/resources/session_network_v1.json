@@ -1,0 +1,13 @@
+{
+  "templateId": "session_network_v1",
+  "templateVersion": 1,
+  "resourceType": "network",
+  "driver": "bridge",
+  "internal": true,
+  "attachable": false,
+  "namePattern": "lab-{labId}-net",
+  "requiredLabels": {
+    "platform.managed": "true",
+    "platform.resourceType": "lab-network"
+  }
+}

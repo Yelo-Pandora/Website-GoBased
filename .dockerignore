@@ -1,0 +1,10 @@
+.git
+.gitignore
+.superpowers
+.env
+bin
+runtime
+web/dist
+web/node_modules
+*.exe
+*.log

@@ -1,0 +1,16 @@
+upstream lab_${labId} {
+  ${upstreamServers}
+}
+
+server {
+  listen 8080;
+  server_name ${labId}.lab.internal;
+
+  location / {
+    proxy_http_version 1.1;
+    proxy_set_header Host $host;
+    proxy_set_header X-Lab-ID ${labId};
+    proxy_set_header X-Request-ID $request_id;
+    proxy_pass http://lab_${labId};
+  }
+}

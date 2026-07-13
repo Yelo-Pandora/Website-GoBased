@@ -1,0 +1,56 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://backend-learning-platform.local/contracts/orchestrator/command.schema.json",
+  "title": "Orchestrator command",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "commandType",
+    "commandId",
+    "operationId",
+    "labId",
+    "requestedBy"
+  ],
+  "properties": {
+    "commandType": {
+      "type": "string",
+      "enum": [
+        "PROVISION_LAB",
+        "RESET_LAB",
+        "DESTROY_LAB",
+        "CREATE_APP_INSTANCE",
+        "DELETE_APP_INSTANCE",
+        "UPDATE_APP_CAPACITY",
+        "CREATE_SESSION_REDIS",
+        "RESTART_SESSION_REDIS",
+        "DELETE_SESSION_REDIS",
+        "APPLY_LAB_UPSTREAM",
+        "REMOVE_LAB_UPSTREAM",
+        "RESET_LAB_DATABASE",
+        "RECONCILE_RESOURCES"
+      ]
+    },
+    "commandId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64
+    },
+    "operationId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64
+    },
+    "labId": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9-]{3,63}$"
+    },
+    "requestedBy": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64
+    },
+    "payload": {
+      "type": "object"
+    }
+  }
+}

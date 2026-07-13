@@ -1,20 +1,27 @@
-APP_NAME := purchase-api
-APP_ENTRY := ./cmd/api
-APP_BIN := bin/$(APP_NAME)
-
-.PHONY: build run test tidy fmt
+.PHONY: build compose-build compose-down compose-up fmt test tidy verify
 
 build:
-	@go build -o $(APP_BIN) $(APP_ENTRY)
+	go build ./services/platform-api/cmd/platform-api
+	go build ./services/orchestrator/cmd/orchestrator
+	go build ./services/lab-app/cmd/lab-app
 
-run:
-	@go run $(APP_ENTRY)
+compose-build:
+	docker compose build
 
-test:
-	@go test -v ./...
+compose-up:
+	docker compose up -d --wait
 
-tidy:
-	@go mod tidy
+compose-down:
+	docker compose down
 
 fmt:
-	@gofmt -w ./cmd ./internal
+	gofmt -w ./internal ./services
+
+test:
+	go test ./...
+
+tidy:
+	go mod tidy
+
+verify: fmt test build
+	docker compose config --quiet

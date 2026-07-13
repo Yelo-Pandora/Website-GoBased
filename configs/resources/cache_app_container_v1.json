@@ -1,0 +1,14 @@
+{
+  "templateId": "cache_app_container_v1",
+  "templateVersion": 1,
+  "resourceType": "container",
+  "extends": "app_container_v1",
+  "modules": [
+    "product-read",
+    "cache-l1",
+    "cache-l2",
+    "cache-protection",
+    "metrics-export",
+    "health"
+  ]
+}

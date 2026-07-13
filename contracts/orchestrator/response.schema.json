@@ -1,0 +1,36 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://backend-learning-platform.local/contracts/orchestrator/response.schema.json",
+  "title": "Orchestrator response",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "commandId",
+    "operationId",
+    "status"
+  ],
+  "properties": {
+    "commandId": {
+      "type": "string"
+    },
+    "operationId": {
+      "type": "string"
+    },
+    "status": {
+      "type": "string",
+      "enum": ["accepted", "succeeded", "failed", "rejected"]
+    },
+    "result": {},
+    "error": {
+      "type": ["object", "null"],
+      "properties": {
+        "code": {
+          "type": "string"
+        },
+        "message": {
+          "type": "string"
+        }
+      }
+    }
+  }
+}

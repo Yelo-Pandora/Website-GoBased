@@ -1,0 +1,264 @@
+name: ${COMPOSE_PROJECT_NAME}
+
+services:
+  volume-init:
+    image: ${ALPINE_IMAGE}
+    network_mode: none
+    restart: "no"
+    volumes:
+      - orchestrator-socket:/volumes/orchestrator
+      - lab-nginx-config:/volumes/lab-nginx
+      - ./deploy/volume-init/init-volumes.sh:/opt/platform/init-volumes.sh:ro
+    command: ["/bin/sh", "/opt/platform/init-volumes.sh"]
+
+  docker-socket-proxy:
+    image: ${SOCKET_PROXY_IMAGE}
+    environment:
+      CONTAINERS: "1"
+      IMAGES: "1"
+      NETWORKS: "1"
+      POST: "1"
+      VOLUMES: "1"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    networks:
+      - orchestration-net
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "-", "http://127.0.0.1:2375/_ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 10
+      start_period: 5s
+    restart: unless-stopped
+
+  shared-mysql:
+    build:
+      context: .
+      dockerfile: database/mysql/Dockerfile
+      args:
+        MYSQL_IMAGE: ${MYSQL_IMAGE}
+    command:
+      - --default-time-zone=+00:00
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD}
+      MYSQL_DATABASE: ${MYSQL_PLATFORM_DATABASE}
+      MYSQL_USER: ${MYSQL_PLATFORM_USER}
+      MYSQL_PASSWORD: ${MYSQL_PLATFORM_PASSWORD}
+      MYSQL_PLATFORM_DATABASE: ${MYSQL_PLATFORM_DATABASE}
+      MYSQL_PLATFORM_USER: ${MYSQL_PLATFORM_USER}
+      MYSQL_ORCHESTRATOR_USER: ${MYSQL_ORCHESTRATOR_USER}
+      MYSQL_ORCHESTRATOR_PASSWORD: ${MYSQL_ORCHESTRATOR_PASSWORD}
+      SEED_TEST_USERS: ${SEED_TEST_USERS}
+      TZ: ${TZ}
+    volumes:
+      - mysql-data:/var/lib/mysql
+    networks:
+      - platform-data-net
+      - db-admin-net
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - mysqladmin ping -h 127.0.0.1 -uroot -p$${MYSQL_ROOT_PASSWORD} --silent
+      interval: 5s
+      timeout: 5s
+      retries: 30
+      start_period: 30s
+    restart: unless-stopped
+
+  orchestrator:
+    build:
+      context: .
+      dockerfile: services/orchestrator/Dockerfile
+      args:
+        GO_IMAGE: ${GO_IMAGE}
+        ALPINE_IMAGE: ${ALPINE_IMAGE}
+        GOPROXY: ${GOPROXY}
+    environment:
+      ORCHESTRATOR_SOCKET_PATH: ${ORCHESTRATOR_SOCKET_PATH}
+      DOCKER_HOST: tcp://docker-socket-proxy:2375
+      MYSQL_HOST: shared-mysql
+      MYSQL_PORT: "3306"
+      MYSQL_PLATFORM_DATABASE: ${MYSQL_PLATFORM_DATABASE}
+      MYSQL_ORCHESTRATOR_USER: ${MYSQL_ORCHESTRATOR_USER}
+      MYSQL_ORCHESTRATOR_PASSWORD: ${MYSQL_ORCHESTRATOR_PASSWORD}
+      TZ: ${TZ}
+    volumes:
+      - orchestrator-socket:/run/platform
+    networks:
+      - orchestration-net
+      - db-admin-net
+    depends_on:
+      volume-init:
+        condition: service_completed_successfully
+      docker-socket-proxy:
+        condition: service_healthy
+      shared-mysql:
+        condition: service_healthy
+    read_only: true
+    tmpfs:
+      - /tmp:size=16m,mode=1777
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    healthcheck:
+      test: ["CMD", "/usr/local/bin/orchestrator", "healthcheck"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 5s
+    restart: unless-stopped
+
+  lab-gateway-nginx:
+    build:
+      context: .
+      dockerfile: deploy/nginx/lab-gateway/Dockerfile
+      args:
+        NGINX_IMAGE: ${NGINX_IMAGE}
+    volumes:
+      - lab-nginx-config:/etc/nginx/labs
+    networks:
+      - lab-control-net
+    depends_on:
+      volume-init:
+        condition: service_completed_successfully
+    read_only: true
+    tmpfs:
+      - /tmp:size=32m,mode=1777
+      - /var/cache/nginx:size=16m,uid=101,gid=101,mode=0750
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    restart: unless-stopped
+
+  platform-api:
+    build:
+      context: .
+      dockerfile: services/platform-api/Dockerfile
+      args:
+        GO_IMAGE: ${GO_IMAGE}
+        ALPINE_IMAGE: ${ALPINE_IMAGE}
+        GOPROXY: ${GOPROXY}
+    environment:
+      PLATFORM_API_ADDR: ${PLATFORM_API_ADDR}
+      MYSQL_HOST: shared-mysql
+      MYSQL_PORT: "3306"
+      MYSQL_PLATFORM_DATABASE: ${MYSQL_PLATFORM_DATABASE}
+      MYSQL_PLATFORM_USER: ${MYSQL_PLATFORM_USER}
+      MYSQL_PLATFORM_PASSWORD: ${MYSQL_PLATFORM_PASSWORD}
+      ORCHESTRATOR_SOCKET_PATH: ${ORCHESTRATOR_SOCKET_PATH}
+      LAB_GATEWAY_ADDR: ${LAB_GATEWAY_ADDR}
+      TZ: ${TZ}
+    volumes:
+      - orchestrator-socket:/run/platform:ro
+    networks:
+      - platform-edge-net
+      - platform-data-net
+      - lab-control-net
+    depends_on:
+      shared-mysql:
+        condition: service_healthy
+      orchestrator:
+        condition: service_healthy
+      lab-gateway-nginx:
+        condition: service_healthy
+    read_only: true
+    tmpfs:
+      - /tmp:size=16m,mode=1777
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "-", "http://127.0.0.1:8080/readyz"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 5s
+    restart: unless-stopped
+
+  edge-nginx:
+    build:
+      context: .
+      dockerfile: web/Dockerfile
+      args:
+        NODE_IMAGE: ${NODE_IMAGE}
+        NGINX_IMAGE: ${NGINX_IMAGE}
+    ports:
+      - "${HTTP_PORT}:8080"
+    networks:
+      - platform-edge-net
+    depends_on:
+      platform-api:
+        condition: service_healthy
+    read_only: true
+    tmpfs:
+      - /tmp:size=32m,mode=1777
+      - /var/cache/nginx:size=16m,uid=101,gid=101,mode=0750
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    restart: unless-stopped
+
+  lab-app:
+    profiles:
+      - images
+    image: ${LAB_APP_IMAGE}
+    build:
+      context: .
+      dockerfile: services/lab-app/Dockerfile
+      args:
+        GO_IMAGE: ${GO_IMAGE}
+        ALPINE_IMAGE: ${ALPINE_IMAGE}
+        GOPROXY: ${GOPROXY}
+    environment:
+      LAB_APP_ADDR: :8080
+      LAB_ID: unassigned
+      INSTANCE_ID: unassigned
+      SCENARIO_TYPE: scaffold
+      TZ: ${TZ}
+    network_mode: none
+    read_only: true
+    tmpfs:
+      - /tmp:size=16m,mode=1777
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: ${LAB_DEFAULT_PIDS_LIMIT}
+    mem_limit: ${LAB_DEFAULT_MEMORY_MB}m
+
+networks:
+  platform-edge-net:
+    name: ${COMPOSE_PROJECT_NAME}-platform-edge-net
+    driver: bridge
+  platform-data-net:
+    name: ${COMPOSE_PROJECT_NAME}-platform-data-net
+    driver: bridge
+    internal: true
+  lab-control-net:
+    name: ${COMPOSE_PROJECT_NAME}-lab-control-net
+    driver: bridge
+    internal: true
+  orchestration-net:
+    name: ${COMPOSE_PROJECT_NAME}-orchestration-net
+    driver: bridge
+    internal: true
+  db-admin-net:
+    name: ${COMPOSE_PROJECT_NAME}-db-admin-net
+    driver: bridge
+    internal: true
+
+volumes:
+  mysql-data:
+    name: ${COMPOSE_PROJECT_NAME}-mysql-data
+  orchestrator-socket:
+    name: ${COMPOSE_PROJECT_NAME}-orchestrator-socket
+  lab-nginx-config:
+    name: ${COMPOSE_PROJECT_NAME}-lab-nginx-config

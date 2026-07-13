@@ -1,0 +1,10 @@
+{
+  "templateId": "lab_nginx_fragment_v1",
+  "templateVersion": 1,
+  "resourceType": "nginxFragment",
+  "templatePath": "/opt/platform/nginx-templates/lab-upstream.conf.tmpl",
+  "outputDirectory": "/var/lib/platform/nginx-labs",
+  "testBeforeReload": true,
+  "atomicReplace": true,
+  "gracefulReload": true
+}

@@ -1,0 +1,37 @@
+openapi: 3.1.0
+info:
+  title: Backend Architecture Learning Platform API
+  version: 0.1.0
+paths:
+  /healthz:
+    get:
+      operationId: getLiveness
+      responses:
+        "200":
+          description: Process is alive.
+  /readyz:
+    get:
+      operationId: getReadiness
+      responses:
+        "200":
+          description: Process and platform database are ready.
+        "503":
+          description: A required dependency is unavailable.
+  /api/v1/system/info:
+    get:
+      operationId: getSystemInfo
+      responses:
+        "200":
+          description: Foundation scaffold build information.
+  /api/v1/courses:
+    get:
+      operationId: listCourses
+      responses:
+        "501":
+          description: Reserved for the course implementation phase.
+  /api/v1/labs:
+    post:
+      operationId: createLab
+      responses:
+        "501":
+          description: Reserved for the lab implementation phase.

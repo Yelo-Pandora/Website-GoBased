@@ -1,0 +1,21 @@
+{
+  "templateId": "session_redis_v1",
+  "templateVersion": 1,
+  "resourceType": "container",
+  "imageEnv": "REDIS_IMAGE",
+  "command": [
+    "redis-server",
+    "--save",
+    "",
+    "--appendonly",
+    "no",
+    "--maxmemory",
+    "48mb",
+    "--maxmemory-policy",
+    "allkeys-lru"
+  ],
+  "publishPorts": false,
+  "readOnlyRootFilesystem": true,
+  "memoryLimitMb": 64,
+  "pidsLimit": 32
+}
