@@ -36,3 +36,9 @@ docker compose --profile images build lab-app
 ```
 
 完整需求、架构和脚手架设计位于 `docs/superpowers/specs`。
+
+基础脚手架的作用、组件边界和推荐阅读顺序见
+[`docs/foundation-scaffold-guide.md`](docs/foundation-scaffold-guide.md)。
+
+前端预期 API、JSON 示例和待确认契约见
+[`docs/frontend-api-integration-guide.md`](docs/frontend-api-integration-guide.md)。

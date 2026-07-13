@@ -1,0 +1,1136 @@
+# 前端 API 对接指南
+
+本文基于当前代码、OpenAPI、SRS 和 SDS，整理预期向前端开放的 URL
+端点及 JSON 示例。
+
+本文用于前端 Mock、页面状态设计和后端接口评审。
+它不是已经冻结的最终 API 契约。
+
+示例中的 ID、Token 和时间只用于说明字段形状。
+除文中明确给出的范围和枚举外，示例值不构成后端约束。
+
+前端快速使用本文的顺序如下：
+
+1. 先阅读第 3 节，确认端点当前属于哪个实现阶段。
+2. 使用第 5 至第 7 节的 JSON 建立 Course、Auth 和 Lab Mock。
+3. 对状态变更统一模拟 `202 Accepted` 和 Operation 对象。
+4. 使用第 7.6 节模拟 SSE，把 Operation 和 Lab Snapshot 更新到最新状态。
+5. 使用第 9 节的稳定错误码驱动页面错误分支。
+6. 在后端正式开发前评审第 13 节的开放问题。
+
+## 1. 状态标记
+
+本文使用以下状态：
+
+- `available`：当前代码已经实现并通过 Compose 验收。
+- `reserved`：OpenAPI 已保留，但当前 Go Router 尚未注册实现。
+- `planned`：SDS 已定义 URL 和语义，但 OpenAPI 与代码尚未实现。
+- `needs-review`：前端对接需要，但 SDS 尚未固定具体契约。
+
+`reserved` 端点目前实际会返回 `404 Not Found`，而不是 OpenAPI 中描述的
+`501 Not Implemented`。
+前端在后端实现前应使用 Mock，不应依赖当前 `404` 行为。
+
+## 2. 基础调用约定
+
+### 2.1 Base URL
+
+本地 Compose 环境使用同源访问：
+
+```text
+http://127.0.0.1:8080
+```
+
+平台 API 前缀为：
+
+```text
+/api/v1
+```
+
+前端代码应优先使用相对 URL，例如 `/api/v1/courses`。
+Edge Nginx 会把 `/api/` 请求代理到 `platform-api`。
+
+### 2.2 通用请求头
+
+JSON 请求建议使用：
+
+```http
+Accept: application/json
+Content-Type: application/json
+```
+
+认证预计使用服务端 Session Cookie。
+浏览器请求必须允许携带 Cookie：
+
+```javascript
+fetch('/api/v1/auth/me', {
+  credentials: 'include',
+  headers: {
+    'Accept': 'application/json',
+  },
+});
+```
+
+### 2.3 Session 与 CSRF
+
+SDS 已确认以下安全规则：
+
+- Session Token 由服务端随机生成。
+- Session Cookie 使用 `HttpOnly` 和 `SameSite=Strict`。
+- 当前 HTTP 部署不能设置 `Secure`，迁移 HTTPS 后必须启用。
+- Session Token 和 CSRF Token 不得进入 URL 或日志。
+- 需要认证的状态变更请求必须通过 CSRF 校验。
+
+以下名称尚未由 SDS 固定，本文采用前端草案名称：
+
+```http
+Cookie: session=<http-only-token>
+X-CSRF-Token: <csrf-token>
+```
+
+建议登录响应在 JSON 中返回 `csrfToken`，由前端保存在内存中。
+Cookie 名称、CSRF Header 名称和 Token 刷新策略需要后端确认。
+
+### 2.4 operationId
+
+所有实验状态变更请求必须携带唯一 `operationId`。
+该字段用于浏览器重试幂等和同一实验操作串行化。
+
+本文示例使用 UUID v4：
+
+```json
+{
+  "operationId": "4f6ed5ac-1d24-49df-8de3-efac91d09a65"
+}
+```
+
+SDS 只要求唯一性，没有固定 UUID 格式。
+最终格式需要在 OpenAPI 中确认。
+
+### 2.5 时间和命名
+
+建议遵守以下规则：
+
+- JSON 字段使用 `camelCase`。
+- 时间使用 UTC ISO 8601，例如 `2026-07-13T06:30:00Z`。
+- 列表始终返回数组，即使只有一个元素。
+- 不存在的可选对象使用 `null`，不使用空字符串。
+- 金额使用 JSON number，币种使用三位大写代码。
+
+## 3. 端点总览
+
+| 状态 | 方法 | URL | 用途 |
+| --- | --- | --- | --- |
+| `available` | GET | `/healthz` | Edge Nginx 存活检查 |
+| `available` | GET | `/api/v1/system/info` | 脚手架构建信息 |
+| `reserved` | GET | `/api/v1/courses` | 课程和知识地图列表 |
+| `planned` | GET | `/api/v1/courses/:id` | 课程详情和理论内容 |
+| `planned` | POST | `/api/v1/auth/login` | 测试账户登录 |
+| `planned` | POST | `/api/v1/auth/logout` | 注销当前 Session |
+| `planned` | GET | `/api/v1/auth/me` | 获取当前登录用户 |
+| `reserved` | POST | `/api/v1/labs` | 创建实验 |
+| `planned` | GET | `/api/v1/labs/:id` | 获取完整实验快照 |
+| `planned` | POST | `/api/v1/labs/:id/actions` | 提交白名单实验动作 |
+| `planned` | POST | `/api/v1/labs/:id/reset` | 重置实验 |
+| `planned` | DELETE | `/api/v1/labs/:id` | 主动结束实验 |
+| `planned` | GET | `/api/v1/labs/:id/events` | 订阅实验 SSE 事件 |
+
+## 4. 当前可用端点
+
+### 4.1 `GET /healthz`
+
+状态：`available`
+
+该端点由 Edge Nginx 直接响应。
+它只表示公网入口进程可用，不表示 MySQL 或平台 API 已就绪。
+
+请求没有 JSON Body。
+
+成功响应：`200 OK`
+
+```json
+{
+  "service": "edge-nginx",
+  "status": "ok"
+}
+```
+
+### 4.2 `GET /api/v1/system/info`
+
+状态：`available`
+
+该端点用于当前脚手架页面显示平台身份和构建版本。
+
+请求没有 JSON Body。
+
+成功响应：`200 OK`
+
+```json
+{
+  "service": "platform-api",
+  "status": "scaffold",
+  "version": "dev",
+  "commit": "unknown",
+  "labGatewayAddr": "http://lab-gateway-nginx:8080"
+}
+```
+
+`labGatewayAddr` 是当前诊断字段，包含 Docker 内部服务地址。
+前端业务代码不应依赖或直接请求该地址。
+
+## 5. 课程端点
+
+课程允许匿名读取。
+已登录用户的响应可以附带个人学习进度。
+
+### 5.1 `GET /api/v1/courses`
+
+状态：`reserved`
+
+当前 OpenAPI 已保留该端点，但当前 Router 实际返回 `404`。
+
+请求没有 JSON Body。
+
+建议成功响应：`200 OK`
+
+```json
+{
+  "data": {
+    "courses": [
+      {
+        "id": 1,
+        "slug": "standalone-architecture",
+        "title": "单机架构",
+        "category": "foundation",
+        "status": "theory",
+        "sortOrder": 10,
+        "summary": "理解应用、数据和入口集中在单机时的职责与限制。",
+        "labAvailable": false,
+        "progress": null
+      },
+      {
+        "id": 3,
+        "slug": "application-cluster",
+        "title": "应用集群与负载均衡",
+        "category": "application",
+        "status": "active",
+        "sortOrder": 30,
+        "summary": "通过应用容器和内部 Nginx 观察容量与流量分配。",
+        "labAvailable": true,
+        "progress": {
+          "viewed": true,
+          "lastViewedAt": "2026-07-13T06:30:00Z",
+          "lastLabId": "lab_01J2M8Y5A4D7KQ2V9N6P3R1T0X"
+        }
+      }
+    ]
+  },
+  "meta": {
+    "authenticated": true,
+    "total": 12
+  }
+}
+```
+
+明确来源字段：
+
+- `id`
+- `slug`
+- `title`
+- `category`
+- `status`
+- `sortOrder`
+- `summary`
+- `progress.viewed`
+- `progress.lastViewedAt`
+- `progress.lastLabId`
+
+`labAvailable`、`data` Envelope 和 `meta` 是前端草案字段。
+
+课程状态当前数据库允许：
+
+```json
+["theory", "active", "coming_soon"]
+```
+
+### 5.2 `GET /api/v1/courses/:id`
+
+状态：`planned`
+
+SDS 使用 `:id`，但没有确认路径参数使用数字 ID 还是稳定 `slug`。
+前端建议优先使用 `slug`，最终需由 OpenAPI 固定。
+
+请求没有 JSON Body。
+
+建议成功响应：`200 OK`
+
+```json
+{
+  "data": {
+    "course": {
+      "id": 3,
+      "slug": "application-cluster",
+      "title": "应用集群与负载均衡",
+      "category": "application",
+      "status": "active",
+      "sortOrder": 30,
+      "summary": "通过应用容器和内部 Nginx 观察容量与流量分配。",
+      "content": {
+        "overview": "理解多实例部署、负载均衡和容量边界。",
+        "sections": [
+          {
+            "id": "request-path",
+            "title": "请求路径",
+            "markdown": "浏览器流量先进入内部 Nginx，再分配到应用实例。"
+          }
+        ]
+      },
+      "implementation": {
+        "requestPath": [
+          "traffic-generator",
+          "lab-gateway-nginx",
+          "lab-app",
+          "shared-mysql"
+        ],
+        "keyConcepts": [
+          "fixed-weight-balancing",
+          "adaptive-balancing",
+          "effective-capacity"
+        ]
+      },
+      "lab": {
+        "available": true,
+        "scenarioType": "application_cluster",
+        "allowedInstanceRange": {
+          "min": 1,
+          "max": 4
+        }
+      },
+      "progress": {
+        "viewed": true,
+        "lastViewedAt": "2026-07-13T06:30:00Z",
+        "lastLabId": null
+      }
+    }
+  }
+}
+```
+
+`content`、`implementation` 和 `lab` 的具体结构尚未在 SDS 中固定。
+SDS 只要求课程页展示理论内容、调用链、拓扑、关键配置、指标和伪代码。
+
+建议错误：
+
+- `404 COURSE_NOT_FOUND`
+
+## 6. 认证端点
+
+MVP 不提供公开注册。
+只有管理员预创建且未禁用的测试账户可以登录。
+
+### 6.1 `POST /api/v1/auth/login`
+
+状态：`planned`
+
+请求 JSON：
+
+```json
+{
+  "username": "learner",
+  "password": "example-password"
+}
+```
+
+建议成功响应：`200 OK`
+
+```json
+{
+  "data": {
+    "user": {
+      "id": 1,
+      "username": "learner",
+      "status": "active"
+    },
+    "csrfToken": "csrf_9a7c1f6b2d4e8a0c",
+    "sessionExpiresAt": "2026-07-13T14:30:00Z"
+  }
+}
+```
+
+同时预计返回 Session Cookie：
+
+```http
+Set-Cookie: session=<opaque-token>; HttpOnly; SameSite=Strict; Path=/
+```
+
+建议错误：
+
+- `400 VALIDATION_FAILED`
+- `401 INVALID_CREDENTIALS`
+- `403 ACCOUNT_DISABLED`
+- `429 LOGIN_RATE_LIMITED`
+
+这些认证错误码尚未在 SRS 的稳定错误码列表中逐项确认。
+
+### 6.2 `POST /api/v1/auth/logout`
+
+状态：`planned`
+
+请求需要 Session Cookie 和 CSRF Header。
+
+建议请求 JSON：
+
+```json
+{}
+```
+
+建议成功响应：`200 OK`
+
+```json
+{
+  "data": {
+    "loggedOut": true
+  }
+}
+```
+
+服务端应撤销 Session，并返回过期 Cookie。
+
+建议错误：
+
+- `401 AUTH_REQUIRED`
+- `403 CSRF_INVALID`
+
+### 6.3 `GET /api/v1/auth/me`
+
+状态：`planned`
+
+请求没有 JSON Body。
+
+建议成功响应：`200 OK`
+
+```json
+{
+  "data": {
+    "user": {
+      "id": 1,
+      "username": "learner",
+      "status": "active"
+    },
+    "csrfToken": "csrf_9a7c1f6b2d4e8a0c",
+    "sessionExpiresAt": "2026-07-13T14:30:00Z",
+    "activeLabId": "lab_01J2M8Y5A4D7KQ2V9N6P3R1T0X"
+  }
+}
+```
+
+`activeLabId` 是解决页面刷新后恢复活动实验入口的建议字段。
+SDS 没有定义单独的“获取当前活动实验”端点。
+
+未登录建议响应：`401 Unauthorized`
+
+```json
+{
+  "error": {
+    "code": "AUTH_REQUIRED",
+    "message": "Authentication is required.",
+    "details": {}
+  }
+}
+```
+
+是否对匿名用户返回 `401`，还是返回 `200` 和 `user: null`，需要后端确认。
+
+## 7. 实验端点
+
+所有实验读取和操作都必须验证登录状态、实验归属和目标实例归属。
+每个账户同时最多拥有一个活动实验。
+
+活动状态包括：
+
+```json
+[
+  "Preparing",
+  "Running",
+  "Expiring",
+  "Terminating"
+]
+```
+
+完整状态集合为：
+
+```json
+[
+  "Preparing",
+  "Running",
+  "Expiring",
+  "Failed",
+  "Terminating",
+  "Terminated"
+]
+```
+
+### 7.1 `POST /api/v1/labs`
+
+状态：`reserved`
+
+当前 OpenAPI 已保留该端点，但当前 Router 实际返回 `404`。
+
+请求 JSON：
+
+```json
+{
+  "operationId": "4f6ed5ac-1d24-49df-8de3-efac91d09a65",
+  "courseId": 3
+}
+```
+
+前端只提交课程身份。
+`scenarioType`、模板 ID、镜像、网络和资源限制应由后端可信模板决定。
+
+建议成功响应：`202 Accepted`
+
+```json
+{
+  "data": {
+    "lab": {
+      "id": "lab_01J2M8Y5A4D7KQ2V9N6P3R1T0X",
+      "courseId": 3,
+      "scenarioType": "application_cluster",
+      "status": "Preparing",
+      "createdAt": "2026-07-13T06:30:00Z"
+    },
+    "operation": {
+      "operationId": "4f6ed5ac-1d24-49df-8de3-efac91d09a65",
+      "action": "CREATE_LAB",
+      "status": "pending",
+      "submittedAt": "2026-07-13T06:30:00Z"
+    }
+  }
+}
+```
+
+建议错误：
+
+- `401 AUTH_REQUIRED`
+- `403 CSRF_INVALID`
+- `404 COURSE_NOT_FOUND`
+- `409 LAB_ALREADY_ACTIVE`
+- `409 LAB_BUSY`
+- `503 RESOURCE_CAPACITY_EXCEEDED`
+- `503 DOCKER_UNAVAILABLE`
+
+### 7.2 `GET /api/v1/labs/:id`
+
+状态：`planned`
+
+该端点应返回页面恢复所需的完整实验快照。
+浏览器连接或重连 SSE 前必须先调用该端点。
+
+请求没有 JSON Body。
+
+建议成功响应：`200 OK`
+
+```json
+{
+  "data": {
+    "lab": {
+      "id": "lab_01J2M8Y5A4D7KQ2V9N6P3R1T0X",
+      "courseId": 3,
+      "scenarioType": "application_cluster",
+      "scenarioTemplateId": "application_cluster_scenario_v1",
+      "status": "Running",
+      "balancingMode": "fixed",
+      "redisEnabled": false,
+      "startedAt": "2026-07-13T06:30:12Z",
+      "lastEffectiveActionAt": "2026-07-13T06:32:10Z",
+      "idleExpiresAt": "2026-07-13T06:42:10Z",
+      "maximumExpiresAt": "2026-07-13T07:00:12Z",
+      "terminationReason": null
+    },
+    "topology": {
+      "instances": [
+        {
+          "instanceId": "app-1",
+          "instanceName": "app-1",
+          "status": "running",
+          "cpuLimitCores": 0.1,
+          "memoryLimitMb": 128,
+          "performancePercent": 100,
+          "effectiveCapacity": 100,
+          "currentWeight": 100
+        }
+      ],
+      "redis": null,
+      "gateway": {
+        "status": "ready"
+      }
+    },
+    "capacity": {
+      "baseCapacity": 100,
+      "capacityWindowMs": 1000,
+      "totalEffectiveCapacity": 100
+    },
+    "traffic": {
+      "running": false,
+      "batchSize": 60,
+      "generationIntervalMs": 1000,
+      "receivedOrders": 0,
+      "processedOrders": 0,
+      "droppedOrders": 0
+    },
+    "cache": null,
+    "latestOperation": {
+      "operationId": "4f6ed5ac-1d24-49df-8de3-efac91d09a65",
+      "action": "CREATE_LAB",
+      "status": "succeeded",
+      "completedAt": "2026-07-13T06:30:12Z",
+      "error": null
+    },
+    "lastEventId": "evt_00000042"
+  }
+}
+```
+
+明确来源字段包括实验状态、模板 ID、平衡模式、Redis 状态、实例资源、
+性能比例、有效容量、权重和操作状态。
+
+以下是计算或建议字段：
+
+- `idleExpiresAt`
+- `maximumExpiresAt`
+- `gateway`
+- `capacity.totalEffectiveCapacity`
+- `traffic`
+- `cache`
+- `latestOperation`
+- `lastEventId`
+
+建议错误：
+
+- `401 AUTH_REQUIRED`
+- `403 LAB_NOT_OWNED`
+- `404 LAB_NOT_FOUND`
+
+### 7.3 `POST /api/v1/labs/:id/actions`
+
+状态：`planned`
+
+所有用户动作使用统一请求结构：
+
+```json
+{
+  "operationId": "9f65d723-e8d0-4813-bf27-b6bc4485ebc6",
+  "actionType": "SET_INSTANCE_PERFORMANCE",
+  "targetInstanceId": "app-3",
+  "parameters": {
+    "performancePercent": 30
+  }
+}
+```
+
+SDS 明确要求以下字段：
+
+- `operationId`
+- 动作类型
+- 可选目标实例
+- 受限参数对象
+
+本文使用 `actionType`、`targetInstanceId` 和 `parameters` 作为建议字段名。
+
+建议成功响应：`202 Accepted`
+
+```json
+{
+  "data": {
+    "operation": {
+      "operationId": "9f65d723-e8d0-4813-bf27-b6bc4485ebc6",
+      "labId": "lab_01J2M8Y5A4D7KQ2V9N6P3R1T0X",
+      "action": "SET_INSTANCE_PERFORMANCE",
+      "targetInstanceId": "app-3",
+      "status": "pending",
+      "submittedAt": "2026-07-13T06:35:00Z"
+    }
+  }
+}
+```
+
+建议错误：
+
+- `400 VALIDATION_FAILED`
+- `401 AUTH_REQUIRED`
+- `403 CSRF_INVALID`
+- `403 LAB_NOT_OWNED`
+- `404 LAB_NOT_FOUND`
+- `404 INSTANCE_NOT_FOUND`
+- `409 LAB_BUSY`
+- `409 MIN_INSTANCE_LIMIT`
+- `409 MAX_INSTANCE_LIMIT`
+- `422 ACTION_NOT_ALLOWED`
+- `503 RESOURCE_CAPACITY_EXCEEDED`
+- `503 DOCKER_UNAVAILABLE`
+- `503 NGINX_CONFIG_INVALID`
+
+#### 7.3.1 建议动作类型
+
+外部动作名称尚未由 SDS 固定。
+以下名称按用户意图设计，不直接暴露内部编排命令。
+
+增加实例：
+
+```json
+{
+  "operationId": "e368b7c2-550c-469a-90cd-733bf2af93d8",
+  "actionType": "ADD_INSTANCE",
+  "targetInstanceId": null,
+  "parameters": {}
+}
+```
+
+删除实例：
+
+```json
+{
+  "operationId": "599dd065-c71c-4d7b-98e0-81f0c06fb7f2",
+  "actionType": "REMOVE_INSTANCE",
+  "targetInstanceId": "app-2",
+  "parameters": {}
+}
+```
+
+调整实例性能：
+
+```json
+{
+  "operationId": "9f65d723-e8d0-4813-bf27-b6bc4485ebc6",
+  "actionType": "SET_INSTANCE_PERFORMANCE",
+  "targetInstanceId": "app-3",
+  "parameters": {
+    "performancePercent": 30
+  }
+}
+```
+
+`performancePercent` 的明确范围为 `20` 至 `100`。
+
+调整固定权重：
+
+```json
+{
+  "operationId": "dfd583ef-a73f-499c-8b9f-0b93291bf0b8",
+  "actionType": "SET_INSTANCE_WEIGHTS",
+  "targetInstanceId": null,
+  "parameters": {
+    "weights": [
+      {
+        "instanceId": "app-1",
+        "weight": 70
+      },
+      {
+        "instanceId": "app-2",
+        "weight": 30
+      }
+    ]
+  }
+}
+```
+
+权重允许范围和是否要求总和为 `100` 尚未固定。
+
+切换负载均衡模式：
+
+```json
+{
+  "operationId": "0bf7cc30-4789-4cea-b7fb-d37dad806529",
+  "actionType": "SET_BALANCING_MODE",
+  "targetInstanceId": null,
+  "parameters": {
+    "mode": "adaptive"
+  }
+}
+```
+
+明确模式为：
+
+```json
+["fixed", "adaptive"]
+```
+
+启动轻量实验流量：
+
+```json
+{
+  "operationId": "5cb4c359-a4a7-4681-90fb-e19b30f9f447",
+  "actionType": "START_TRAFFIC",
+  "targetInstanceId": null,
+  "parameters": {
+    "batchSize": 60,
+    "generationIntervalMs": 1000
+  }
+}
+```
+
+停止实验流量：
+
+```json
+{
+  "operationId": "09f5bb89-a16c-42ef-b749-c36acb3faeaa",
+  "actionType": "STOP_TRAFFIC",
+  "targetInstanceId": null,
+  "parameters": {}
+}
+```
+
+重启会话 Redis：
+
+```json
+{
+  "operationId": "d6fc1554-788a-4e98-bd41-af5d1d6cb142",
+  "actionType": "RESTART_REDIS",
+  "targetInstanceId": null,
+  "parameters": {}
+}
+```
+
+设置缓存保护策略：
+
+```json
+{
+  "operationId": "218ca489-e036-46e0-bb5b-92df9c1cf289",
+  "actionType": "SET_CACHE_PROTECTION",
+  "targetInstanceId": null,
+  "parameters": {
+    "scenario": "penetration",
+    "strategy": "null_cache",
+    "enabled": true
+  }
+}
+```
+
+缓存场景、策略枚举和触发故障动作仍需单独固定。
+
+### 7.4 `POST /api/v1/labs/:id/reset`
+
+状态：`planned`
+
+请求 JSON：
+
+```json
+{
+  "operationId": "158bfe94-e5f6-49a1-96ae-51df0a54184b"
+}
+```
+
+建议成功响应：`202 Accepted`
+
+```json
+{
+  "data": {
+    "operation": {
+      "operationId": "158bfe94-e5f6-49a1-96ae-51df0a54184b",
+      "labId": "lab_01J2M8Y5A4D7KQ2V9N6P3R1T0X",
+      "action": "RESET_LAB",
+      "status": "pending",
+      "submittedAt": "2026-07-13T06:40:00Z"
+    }
+  }
+}
+```
+
+重置成功后应恢复场景初始拓扑、性能、权重、数据库和缓存状态。
+
+建议错误：
+
+- `401 AUTH_REQUIRED`
+- `403 CSRF_INVALID`
+- `403 LAB_NOT_OWNED`
+- `404 LAB_NOT_FOUND`
+- `409 LAB_BUSY`
+- `503 DOCKER_UNAVAILABLE`
+
+### 7.5 `DELETE /api/v1/labs/:id`
+
+状态：`planned`
+
+SRS 要求状态变更携带 `operationId`。
+本文建议 DELETE 请求使用 JSON Body。
+
+请求 JSON：
+
+```json
+{
+  "operationId": "fba6127c-a17e-44fa-a14a-0635fcb2b80a"
+}
+```
+
+建议成功响应：`202 Accepted`
+
+```json
+{
+  "data": {
+    "operation": {
+      "operationId": "fba6127c-a17e-44fa-a14a-0635fcb2b80a",
+      "labId": "lab_01J2M8Y5A4D7KQ2V9N6P3R1T0X",
+      "action": "DESTROY_LAB",
+      "status": "pending",
+      "submittedAt": "2026-07-13T06:45:00Z"
+    }
+  }
+}
+```
+
+`operationId` 放在 DELETE Body、Header 或 Query 中尚未最终确认。
+不建议放入 URL Query，统一 JSON Body 更容易与其他状态变更保持一致。
+
+### 7.6 `GET /api/v1/labs/:id/events`
+
+状态：`planned`
+
+该端点返回 `text/event-stream`，不是普通 JSON 响应。
+认证使用同源 Session Cookie。
+
+首次连接前，前端必须先请求实验快照。
+
+建议请求：
+
+```http
+GET /api/v1/labs/lab_01J2M8Y5A4D7KQ2V9N6P3R1T0X/events
+Accept: text/event-stream
+Cookie: session=<http-only-token>
+```
+
+建议 SSE 消息：
+
+```text
+id: evt_00000043
+event: lab.instance.updated
+data: {"eventId":"evt_00000043","labId":"lab_01J2M8Y5A4D7KQ2V9N6P3R1T0X","eventType":"INSTANCE_CAPACITY_UPDATED","occurredAt":"2026-07-13T06:35:02Z","payload":{"instanceId":"app-3","performancePercent":30,"effectiveCapacity":30}}
+
+```
+
+其中 `data` 解析后的 JSON 为：
+
+```json
+{
+  "eventId": "evt_00000043",
+  "labId": "lab_01J2M8Y5A4D7KQ2V9N6P3R1T0X",
+  "eventType": "INSTANCE_CAPACITY_UPDATED",
+  "occurredAt": "2026-07-13T06:35:02Z",
+  "payload": {
+    "instanceId": "app-3",
+    "performancePercent": 30,
+    "effectiveCapacity": 30
+  }
+}
+```
+
+SDS 明确规定每个事件包含：
+
+- `eventId`
+- `labId`
+- `eventType`
+- `occurredAt`
+- `payload`
+
+建议事件类型：
+
+```json
+[
+  "LAB_STATUS_CHANGED",
+  "LAB_EXPIRING",
+  "INSTANCE_ADDED",
+  "INSTANCE_REMOVED",
+  "INSTANCE_CAPACITY_UPDATED",
+  "WEIGHTS_UPDATED",
+  "TRAFFIC_SAMPLE",
+  "ORDERS_DROPPED",
+  "CACHE_METRICS_UPDATED",
+  "OPERATION_SUCCEEDED",
+  "OPERATION_FAILED",
+  "HEARTBEAT"
+]
+```
+
+这些事件名称是根据 SDS 的事件内容建议的，尚未成为正式枚举。
+
+浏览器自动重连会使用标准 SSE `Last-Event-ID`。
+页面完全刷新后如何把快照中的 `lastEventId` 传回服务端仍需确认。
+可选方案是增加 `afterEventId` Query 参数。
+
+## 8. 操作状态
+
+SDS 定义的操作状态为：
+
+```json
+[
+  "pending",
+  "claimed",
+  "running",
+  "succeeded",
+  "failed",
+  "compensating"
+]
+```
+
+耗时动作返回 `202 Accepted`。
+完成结果通过实验快照和 SSE 获取。
+
+建议操作对象：
+
+```json
+{
+  "operationId": "9f65d723-e8d0-4813-bf27-b6bc4485ebc6",
+  "labId": "lab_01J2M8Y5A4D7KQ2V9N6P3R1T0X",
+  "action": "SET_INSTANCE_PERFORMANCE",
+  "targetInstanceId": "app-3",
+  "status": "succeeded",
+  "attemptCount": 1,
+  "submittedAt": "2026-07-13T06:35:00Z",
+  "completedAt": "2026-07-13T06:35:02Z",
+  "result": {
+    "performancePercent": 30,
+    "cpuLimitCores": 0.03,
+    "effectiveCapacity": 30
+  },
+  "error": null
+}
+```
+
+SDS 提到“查询接口和 SSE”都可获取完成状态，但外部端点列表没有定义独立的
+操作查询 URL。
+这是需要后端设计补齐的契约缺口。
+
+建议候选端点：
+
+```text
+GET /api/v1/operations/:operationId
+```
+
+该候选端点状态为 `needs-review`，前端暂时应从实验快照和 SSE 获取状态。
+
+## 9. 统一错误响应草案
+
+SRS 要求前端依赖稳定业务错误码，不能解析内部错误字符串。
+SDS 没有固定错误 JSON Envelope。
+
+建议错误响应：
+
+```json
+{
+  "error": {
+    "code": "LAB_ALREADY_ACTIVE",
+    "message": "The account already has an active lab.",
+    "details": {
+      "activeLabId": "lab_01J2M8Y5A4D7KQ2V9N6P3R1T0X"
+    },
+    "requestId": "req_01J2M9C8B7A6D5E4F3G2H1J0K"
+  }
+}
+```
+
+`code` 是稳定机器字段。
+`message` 用于展示或日志，但前端业务分支不应依赖其文本。
+`details` 只包含可以安全暴露给当前用户的结构化信息。
+`requestId` 是建议字段，当前入口虽向上游传递请求 ID，但尚未回写响应。
+
+建议 HTTP 状态映射：
+
+| HTTP | 错误码示例 | 含义 |
+| --- | --- | --- |
+| 400 | `VALIDATION_FAILED` | JSON 或字段格式不合法 |
+| 401 | `AUTH_REQUIRED` | 未登录或 Session 无效 |
+| 401 | `INVALID_CREDENTIALS` | 登录凭据错误 |
+| 403 | `CSRF_INVALID` | CSRF Token 缺失或错误 |
+| 403 | `LAB_NOT_OWNED` | 实验或实例不属于当前用户 |
+| 404 | `COURSE_NOT_FOUND` | 课程不存在 |
+| 404 | `LAB_NOT_FOUND` | 实验不存在 |
+| 404 | `INSTANCE_NOT_FOUND` | 实例不存在 |
+| 409 | `LAB_ALREADY_ACTIVE` | 当前账户已有活动实验 |
+| 409 | `LAB_BUSY` | 同一实验存在串行拓扑操作 |
+| 409 | `MIN_INSTANCE_LIMIT` | 删除后会低于最少实例数 |
+| 409 | `MAX_INSTANCE_LIMIT` | 增加后会超过最多实例数 |
+| 422 | `ACTION_NOT_ALLOWED` | 动作不在场景白名单中 |
+| 429 | `LOGIN_RATE_LIMITED` | 登录尝试频率过高 |
+| 503 | `RESOURCE_CAPACITY_EXCEEDED` | 宿主机或平台配额不足 |
+| 503 | `DOCKER_UNAVAILABLE` | Docker 控制面不可用 |
+| 503 | `NGINX_CONFIG_INVALID` | 新 upstream 配置校验失败 |
+
+HTTP 状态映射是本文建议，稳定错误码中的部分名称来自 SRS。
+
+## 10. 前端 Mock 建议
+
+后端实现前，Mock 层建议具备以下特性：
+
+- 使用本文的 `planned` JSON 作为页面模型起点。
+- 把所有枚举集中定义，不在组件中散落字符串。
+- 所有状态变更先返回 `202` 和 `pending` Operation。
+- 通过模拟 SSE 把 Operation 更新为 `running` 和 `succeeded`。
+- 模拟 `AUTH_REQUIRED`、`LAB_BUSY` 和资源不足等稳定错误码。
+- 页面刷新时先加载 `auth/me`，再加载活动实验快照。
+- SSE 只更新局部状态，完整快照仍作为最终恢复依据。
+
+前端类型建议按资源拆分：
+
+```text
+SystemInfo
+CourseSummary
+CourseDetail
+AuthenticatedUser
+LabSnapshot
+LabInstance
+LabOperation
+LabEvent
+ApiError
+```
+
+## 11. 不对前端开放的端点
+
+以下端点不属于浏览器公开 API：
+
+| URL | 原因 |
+| --- | --- |
+| `/readyz` | Platform API 内部依赖就绪检查，Edge 当前不代理 |
+| `/v1/commands` | Orchestrator 的 UDS 内部命令入口 |
+| `/internal/products/:id` | Lab App 内部实验接口 |
+| `/internal/order-batch` | Lab App 内部流量生成接口 |
+| `/internal/runtime-state` | Lab App 内部运行身份接口 |
+| Docker API `:2375` | 只允许 Orchestrator 通过内部网络访问 |
+
+前端不得直接请求 Lab Gateway、Lab App、MySQL、Redis 或 Docker Socket
+Proxy。
+
+## 12. 来源清单
+
+| Source ID | 来源 | 用途 | 置信度 |
+| --- | --- | --- | --- |
+| `SRC-DOC-001` | `2026-07-12` SDS | URL、状态机、动作、SSE 和数据模型 | 高 |
+| `SRC-DOC-002` | `2026-07-11` SRS | 权限、错误码、业务限制和验收语义 | 高 |
+| `SRC-API-001` | `platform-api.openapi.yaml` | 当前保留路径和实现阶段 | 高 |
+| `SRC-CODE-001` | Platform API Router | 当前真实可用响应 | 高 |
+| `SRC-CFG-001` | `configs/scenarios` 和 `configs/resources` | 模板默认值和资源范围 | 高 |
+
+内部 UDS Command 和 Lab App 内部 API 只用于确认边界。
+它们没有被转换成浏览器公开端点。
+
+## 13. 待后端确认的问题
+
+在把本文升级为正式 OpenAPI 前，需要确认：
+
+1. 成功响应是否统一使用 `data` 和 `meta` Envelope。
+2. 错误响应是否采用本文建议的 `error` Envelope。
+3. Session Cookie、CSRF Header 和 CSRF Token 返回方式。
+4. `GET /auth/me` 对匿名用户返回 `401` 还是 `200 user: null`。
+5. 课程详情路径使用数字 ID 还是 `slug`。
+6. 课程静态正文、实现说明和实验能力的最终 JSON 结构。
+7. Lab API 对外使用的稳定 `instanceId` 格式。
+8. 外部 `actionType` 枚举及每个动作的参数 Schema。
+9. 固定权重的允许范围和总和规则。
+10. 缓存实验场景、保护策略和故障触发动作枚举。
+11. DELETE 请求的 `operationId` 放在 Body 还是 Header。
+12. 是否增加独立 Operation 查询端点。
+13. 页面刷新后 SSE 补发使用 Header 还是 Query 参数。
+14. SSE 事件类型、事件保留数量和补发时间窗口。
+15. HTTP 状态码与稳定业务错误码的最终映射。
+16. 是否在 `auth/me` 返回 `activeLabId`。
+
+这些问题确认后，应同步更新 OpenAPI，并以 OpenAPI 作为前后端正式契约。
