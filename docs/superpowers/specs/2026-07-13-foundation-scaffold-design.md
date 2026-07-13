@@ -319,43 +319,113 @@ MySQL 入口先运行环境驱动的账号初始化脚本，再按文件名执�
 根目录 `.env` 保存本地实际配置，并由 Git 忽略。
 `.env.example` 保存字段说明、非敏感示例和镜像版本基线。
 
-环境变量至少包括：
+环境变量至少包括以下字段。
+注释说明字段的消费者、用途和推荐的本地开发值。
 
 ```dotenv
-COMPOSE_PROJECT_NAME=
-HTTP_PORT=
-TZ=
+# Compose 项目名。
+# 它用于生成默认容器、网络和卷名称，避免与同一宿主机上的其他项目冲突。
+COMPOSE_PROJECT_NAME=backend-learning-platform
 
-MYSQL_ROOT_PASSWORD=
-MYSQL_PLATFORM_DATABASE=
-MYSQL_PLATFORM_USER=
-MYSQL_PLATFORM_PASSWORD=
-MYSQL_ORCHESTRATOR_USER=
-MYSQL_ORCHESTRATOR_PASSWORD=
+# 公网入口 Nginx 映射到宿主机的 HTTP 端口。
+# 这是本轮唯一允许发布到宿主机的应用端口。
+HTTP_PORT=8080
 
-PLATFORM_API_ADDR=
-ORCHESTRATOR_SOCKET_PATH=
-LAB_GATEWAY_ADDR=
+# 所有支持该变量的容器使用的时区。
+# 日志和数据库时间仍应保存为 UTC，展示时再转换为本地时区。
+TZ=Asia/Shanghai
 
-GO_IMAGE=
-NODE_IMAGE=
-NGINX_IMAGE=
-MYSQL_IMAGE=
-REDIS_IMAGE=
-SOCKET_PROXY_IMAGE=
-ALPINE_IMAGE=
+# MySQL root 账号密码。
+# 仅供 MySQL 首次初始化和受信任的维护操作使用，应用服务不得使用该账号。
+# 该值属于敏感信息，实际 .env 必须使用随机强密码。
+MYSQL_ROOT_PASSWORD=change-me-root
 
-LAB_APP_IMAGE=
-LAB_NETWORK_PREFIX=
-LAB_MAX_ACTIVE=
-LAB_MAX_INSTANCES_PER_SESSION=
-LAB_DEFAULT_MEMORY_MB=
-LAB_DEFAULT_PIDS_LIMIT=
-SEED_TEST_USERS=
+# 平台控制数据库名称。
+# platform-api 只访问该数据库，不直接访问各实验数据库。
+MYSQL_PLATFORM_DATABASE=platform
+
+# platform-api 使用的最小权限 MySQL 用户名。
+# 该账号只获得平台数据库所需的查询和写入权限。
+MYSQL_PLATFORM_USER=platform_api
+
+# platform-api 数据库账号密码。
+# 该值属于敏感信息，实际 .env 必须使用随机强密码。
+MYSQL_PLATFORM_PASSWORD=change-me-platform
+
+# orchestrator 使用的 MySQL 管理账号名称。
+# 该账号只允许执行固定实验数据库生命周期存储过程。
+MYSQL_ORCHESTRATOR_USER=orchestrator
+
+# orchestrator 数据库账号密码。
+# 该值属于敏感信息，实际 .env 必须使用随机强密码。
+MYSQL_ORCHESTRATOR_PASSWORD=change-me-orchestrator
+
+# platform-api 在容器内部监听的地址。
+# 使用 :8080 表示监听容器的全部网络接口，不代表向宿主机发布端口。
+PLATFORM_API_ADDR=:8080
+
+# platform-api 与 orchestrator 共享的 Unix Domain Socket 路径。
+# 两个容器必须在同一路径挂载同一个命名卷。
+ORCHESTRATOR_SOCKET_PATH=/run/platform/orchestrator.sock
+
+# platform-api 内部流量生成模块访问实验 Nginx 的基础地址。
+# 该名称只在 lab-control-net 内通过 Docker DNS 解析。
+LAB_GATEWAY_ADDR=http://lab-gateway-nginx:8080
+
+# 构建三个 Go 服务时使用的固定 Go 构建镜像。
+GO_IMAGE=golang:1.26.5-alpine3.23
+
+# 构建 Vue SPA 时使用的固定 Node LTS 镜像。
+NODE_IMAGE=node:24.18.0-alpine3.23
+
+# 运行公网入口和实验网关时使用的固定 Nginx stable 镜像。
+NGINX_IMAGE=nginx:1.30.3-alpine3.23
+
+# shared-mysql 使用的固定 MySQL LTS 镜像。
+MYSQL_IMAGE=mysql:8.4.10
+
+# orchestrator 未来创建会话 Redis 时使用的固定镜像。
+# 默认 Compose 启动不会创建 Redis 容器。
+REDIS_IMAGE=redis:8.8.0-alpine3.23
+
+# 受限 Docker API 代理使用的固定镜像。
+SOCKET_PROXY_IMAGE=tecnativa/docker-socket-proxy:v0.4.2
+
+# volume-init 等短生命周期基础任务使用的固定 Alpine 镜像。
+ALPINE_IMAGE=alpine:3.23.5
+
+# lab-app 构建结果的完整镜像名称和标签。
+# orchestrator 未来只能从受信任模板选择该镜像，不能接受用户提交的镜像名。
+LAB_APP_IMAGE=website-gobased/lab-app:dev
+
+# 动态实验网络名称前缀。
+# 实际网络名称使用 lab-{labId}-net，labId 必须先经过严格格式校验。
+LAB_NETWORK_PREFIX=lab
+
+# 整个平台允许同时处于活动状态的实验数量上限。
+# 初始值 10 对应 SRS 中最多 10 名同时在线测试用户和单用户单活动实验规则。
+LAB_MAX_ACTIVE=10
+
+# 单个实验允许同时存在的 lab-app 实例数量上限。
+# 该值来自应用集群实验的一至四实例约束。
+LAB_MAX_INSTANCES_PER_SESSION=4
+
+# 单个动态 lab-app 容器的默认内存上限，单位为 MB。
+# 场景模板可以在不超过平台安全上限的前提下引用该值。
+LAB_DEFAULT_MEMORY_MB=128
+
+# 单个动态实验容器允许创建的最大进程数。
+# 它用于限制进程或线程异常增长对宿主机的影响。
+LAB_DEFAULT_PIDS_LIMIT=64
+
+# 是否在首次初始化时写入本地开发和验收用的预创建测试账号。
+# 正式部署应设置为 false，并通过受信任的命令行管理工具创建账号。
+SEED_TEST_USERS=true
 ```
 
 本地 `.env` 必须包含可直接启动的值。
 密码不得写入镜像、SQL、日志或被 Git 跟踪的文件。
+`.env.example` 中的 `change-me-*` 只能作为字段占位，不能用于实际部署。
 
 ## 11. 容器安全基线
 
