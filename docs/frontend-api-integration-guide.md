@@ -185,9 +185,7 @@ SDS 只要求唯一性，没有固定 UUID 格式。
 
 ### 5.1 `GET /api/v1/courses`
 
-状态：`reserved`
-
-当前 OpenAPI 已保留该端点，但当前 Router 实际返回 `404`。
+状态：`implemented`
 
 请求没有 JSON Body。
 
@@ -253,12 +251,11 @@ SDS 只要求唯一性，没有固定 UUID 格式。
 ["theory", "active", "coming_soon"]
 ```
 
-### 5.2 `GET /api/v1/courses/:id`
+### 5.2 `GET /api/v1/courses/:slug`
 
-状态：`planned`
+状态：`implemented`
 
-SDS 使用 `:id`，但没有确认路径参数使用数字 ID 还是稳定 `slug`。
-前端建议优先使用 `slug`，最终需由 OpenAPI 固定。
+路径参数使用课程的稳定 `slug`，OpenAPI 已固定该语义。
 
 请求没有 JSON Body。
 
@@ -275,16 +272,8 @@ SDS 使用 `:id`，但没有确认路径参数使用数字 ID 还是稳定 `slug
       "status": "active",
       "sortOrder": 30,
       "summary": "通过应用容器和内部 Nginx 观察容量与流量分配。",
-      "content": {
-        "overview": "理解多实例部署、负载均衡和容量边界。",
-        "sections": [
-          {
-            "id": "request-path",
-            "title": "请求路径",
-            "markdown": "浏览器流量先进入内部 Nginx，再分配到应用实例。"
-          }
-        ]
-      },
+      "content": "# 应用集群与负载均衡\n\n一台应用忙不过来时……",
+      "contentFormat": "markdown",
       "implementation": {
         "requestPath": [
           "traffic-generator",
@@ -316,8 +305,8 @@ SDS 使用 `:id`，但没有确认路径参数使用数字 ID 还是稳定 `slug
 }
 ```
 
-`content`、`implementation` 和 `lab` 的具体结构尚未在 SDS 中固定。
-SDS 只要求课程页展示理论内容、调用链、拓扑、关键配置、指标和伪代码。
+`content` 是 UTF-8 Markdown 正文，`contentFormat` 当前固定为 `markdown`。
+`implementation` 和 `lab` 提供调用链、关键概念与实验可用范围。
 
 建议错误：
 

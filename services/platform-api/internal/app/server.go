@@ -11,6 +11,7 @@ import (
 
 	_ "github.com/go-sql-driver/mysql"
 
+	"website-gobased/services/platform-api/internal/course"
 	"website-gobased/services/platform-api/internal/httpapi"
 )
 
@@ -30,8 +31,16 @@ func Run(ctx context.Context, cfg Config, logger *slog.Logger) error {
 	}
 
 	server := &http.Server{
-		Addr:              cfg.Addr,
-		Handler:           httpapi.NewRouter(logger, database, cfg.LabGatewayAddr),
+		Addr: cfg.Addr,
+		Handler: httpapi.NewRouter(
+			logger,
+			database,
+			cfg.LabGatewayAddr,
+			course.NewService(
+				course.NewRepository(database),
+				course.NewContentStore(),
+			),
+		),
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       10 * time.Second,
 		WriteTimeout:      15 * time.Second,

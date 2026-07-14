@@ -1,16 +1,24 @@
 openapi: 3.1.0
 info:
   title: Backend Architecture Learning Platform API
-  version: 0.1.0
+  version: 0.2.0
+  license:
+    name: MIT
+    identifier: MIT
+servers:
+  - url: /
+security: []
 paths:
   /healthz:
     get:
+      summary: Check process liveness
       operationId: getLiveness
       responses:
         "200":
           description: Process is alive.
   /readyz:
     get:
+      summary: Check platform readiness
       operationId: getReadiness
       responses:
         "200":
@@ -19,19 +27,183 @@ paths:
           description: A required dependency is unavailable.
   /api/v1/system/info:
     get:
+      summary: Get platform build information
       operationId: getSystemInfo
       responses:
         "200":
-          description: Foundation scaffold build information.
+          description: Platform build information.
   /api/v1/courses:
     get:
+      summary: List knowledge-map courses
       operationId: listCourses
       responses:
-        "501":
-          description: Reserved for the course implementation phase.
+        "200":
+          description: Knowledge-map courses in display order.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CourseListResponse"
+        "500":
+          $ref: "#/components/responses/InternalError"
+  /api/v1/courses/{slug}:
+    get:
+      summary: Get one course by slug
+      operationId: getCourse
+      parameters:
+        - name: slug
+          in: path
+          required: true
+          schema:
+            type: string
+            pattern: "^[a-z0-9][a-z0-9-]{0,127}$"
+      responses:
+        "200":
+          description: Course metadata, theory content, and lab availability.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CourseDetailResponse"
+        "404":
+          description: Course does not exist.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          $ref: "#/components/responses/InternalError"
   /api/v1/labs:
     post:
+      summary: Create a lab session
       operationId: createLab
       responses:
         "501":
           description: Reserved for the lab implementation phase.
+components:
+  responses:
+    InternalError:
+      description: The request could not be completed.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+  schemas:
+    Course:
+      type: object
+      required:
+        - id
+        - slug
+        - title
+        - category
+        - status
+        - sortOrder
+        - summary
+        - labAvailable
+        - progress
+      properties:
+        id:
+          type: integer
+          format: int64
+        slug:
+          type: string
+        title:
+          type: string
+        category:
+          type: string
+        status:
+          type: string
+          enum: [theory, active, coming_soon]
+        sortOrder:
+          type: integer
+        summary:
+          type: string
+        labAvailable:
+          type: boolean
+        progress:
+          type: [object, "null"]
+    CourseDetail:
+      allOf:
+        - $ref: "#/components/schemas/Course"
+        - type: object
+          required:
+            - content
+            - contentFormat
+            - implementation
+            - lab
+          properties:
+            content:
+              type: string
+            contentFormat:
+              type: string
+              const: markdown
+            implementation:
+              type: object
+              required: [requestPath, keyConcepts]
+              properties:
+                requestPath:
+                  type: array
+                  items:
+                    type: string
+                keyConcepts:
+                  type: array
+                  items:
+                    type: string
+            lab:
+              type: object
+              required: [available]
+              properties:
+                available:
+                  type: boolean
+                scenarioType:
+                  type: string
+                allowedInstanceRange:
+                  type: object
+                  required: [min, max]
+                  properties:
+                    min:
+                      type: integer
+                    max:
+                      type: integer
+    CourseListResponse:
+      type: object
+      required: [data, meta]
+      properties:
+        data:
+          type: object
+          required: [courses]
+          properties:
+            courses:
+              type: array
+              items:
+                $ref: "#/components/schemas/Course"
+        meta:
+          type: object
+          required: [authenticated, total]
+          properties:
+            authenticated:
+              type: boolean
+            total:
+              type: integer
+    CourseDetailResponse:
+      type: object
+      required: [data]
+      properties:
+        data:
+          type: object
+          required: [course]
+          properties:
+            course:
+              $ref: "#/components/schemas/CourseDetail"
+    ErrorResponse:
+      type: object
+      required: [error, requestId]
+      properties:
+        error:
+          type: object
+          required: [code, message]
+          properties:
+            code:
+              type: string
+            message:
+              type: string
+        requestId:
+          type: string
