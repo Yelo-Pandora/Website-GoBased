@@ -1,4 +1,4 @@
-// Package config provides environment-backed configuration helpers.
+// env.go 提供了用于从环境变量中检索配置值的实用函数。
 package config
 
 import (
@@ -8,7 +8,7 @@ import (
 	"strings"
 )
 
-// String returns an environment value or fallback when the value is empty.
+// String 返回一个字符串环境变量的值，如果该值为空，则返回提供的回退值。
 func String(key, fallback string) string {
 	value := strings.TrimSpace(os.Getenv(key))
 	if value == "" {
@@ -17,7 +17,7 @@ func String(key, fallback string) string {
 	return value
 }
 
-// Required returns a non-empty environment value.
+// Required 返回一个非空的环境变量值，如果该值为空，则返回错误。
 func Required(key string) (string, error) {
 	value := strings.TrimSpace(os.Getenv(key))
 	if value == "" {
@@ -26,7 +26,7 @@ func Required(key string) (string, error) {
 	return value, nil
 }
 
-// Int returns an integer environment value or fallback when the value is empty.
+// Int 返回一个整数环境变量的值，如果该值为空，则返回提供的回退值，如果无法解析为整数，则返回错误。
 func Int(key string, fallback int) (int, error) {
 	value := strings.TrimSpace(os.Getenv(key))
 	if value == "" {

@@ -56,9 +56,12 @@ services:
       TZ: ${TZ}
     volumes:
       - mysql-data:/var/lib/mysql
+    ports:
+      - "127.0.0.1:3306:3306"
     networks:
       - platform-data-net
       - db-admin-net
+      - mysql-host-access-net
     healthcheck:
       test:
         - CMD-SHELL
@@ -254,6 +257,9 @@ networks:
     name: ${COMPOSE_PROJECT_NAME}-db-admin-net
     driver: bridge
     internal: true
+  mysql-host-access-net:
+    name: ${COMPOSE_PROJECT_NAME}-mysql-host-access-net
+    driver: bridge
 
 volumes:
   mysql-data:

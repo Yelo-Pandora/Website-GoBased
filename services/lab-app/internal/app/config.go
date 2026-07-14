@@ -1,4 +1,4 @@
-// Package app wires the dynamic lab application process.
+// config.go 作用是定义实验室应用程序的配置结构体，并提供加载配置的函数。它从环境变量中读取配置值，如果环境变量未设置，则使用默认值。
 package app
 
 import sharedconfig "website-gobased/internal/config"

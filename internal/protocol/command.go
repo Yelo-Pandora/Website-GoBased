@@ -1,9 +1,9 @@
-// Package protocol defines stable control-plane message contracts.
+// command.go 定义了用于与Orchestrator通信的命令和响应结构。
 package protocol
 
 import "encoding/json"
 
-// Command is the HTTP/JSON command sent to the orchestrator over UDS.
+// Command 是一个稳定的Orchestrator命令信封。
 type Command struct {
 	CommandType string          `json:"commandType"`
 	CommandID   string          `json:"commandId"`
@@ -13,7 +13,7 @@ type Command struct {
 	Payload     json.RawMessage `json:"payload,omitempty"`
 }
 
-// CommandResponse is the stable orchestrator response envelope.
+// CommandResponse 是一个稳定的Orchestrator命令响应信封。
 type CommandResponse struct {
 	CommandID   string `json:"commandId"`
 	OperationID string `json:"operationId"`

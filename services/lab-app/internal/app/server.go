@@ -1,3 +1,4 @@
+// server.go 作用是定义实验室应用程序的服务器启动和运行逻辑。它创建一个 HTTP 服务器，配置路由和超时设置，并处理应用程序的启动和优雅关闭。
 package app
 
 import (
@@ -11,7 +12,7 @@ import (
 	"website-gobased/services/lab-app/internal/httpapi"
 )
 
-// Run starts the lab application and blocks until shutdown.
+// Run 启动实验室应用程序的 HTTP 服务器，参数包括上下文、配置和日志记录器。它会监听指定的地址，并在接收到终止信号时优雅地关闭服务器。
 func Run(ctx context.Context, cfg Config, logger *slog.Logger) error {
 	server := &http.Server{
 		Addr: cfg.Addr,

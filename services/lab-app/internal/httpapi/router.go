@@ -1,4 +1,4 @@
-// Package httpapi provides the lab application HTTP boundary.
+// router.go 作用是定义实验室应用程序的 HTTP 路由。
 package httpapi
 
 import (
@@ -9,7 +9,7 @@ import (
 	"website-gobased/internal/health"
 )
 
-// RuntimeIdentity identifies a dynamic experiment application instance.
+// RuntimeIdentity 作用是表示实验室应用程序的运行时身份信息，包括实验 ID、容器实例 ID 和场景类型（例如application_cluster）。
 type RuntimeIdentity struct {
 	LabID        string `json:"labId"`
 	InstanceID   string `json:"instanceId"`

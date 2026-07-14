@@ -1,4 +1,4 @@
-// Package health provides consistent HTTP health responses.
+// 用于健康检查的HTTP处理程序和响应结构。
 package health
 
 import (
@@ -7,7 +7,7 @@ import (
 	"time"
 )
 
-// Response is the shared health endpoint payload.
+// 健康检查响应结构。
 type Response struct {
 	Service   string         `json:"service"`
 	Status    string         `json:"status"`
@@ -15,7 +15,7 @@ type Response struct {
 	Details   map[string]any `json:"details,omitempty"`
 }
 
-// Write writes a health response as JSON.
+// Write 将健康检查响应写入HTTP响应。
 func Write(w http.ResponseWriter, statusCode int, response Response) error {
 	response.Timestamp = time.Now().UTC()
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")

@@ -1,3 +1,4 @@
+// env_test.go 用于测试env.go中函数的单元测试。
 package config
 
 import "testing"
