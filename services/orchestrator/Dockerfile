@@ -30,6 +30,10 @@ RUN apk add --no-cache ca-certificates \
     && install -d -o platform -g platform -m 0750 /run/platform
 
 COPY --from=build /out/orchestrator /usr/local/bin/orchestrator
+COPY --chown=platform:platform configs /opt/platform/configs
+COPY --chown=platform:platform contracts/orchestrator /opt/platform/contracts/orchestrator
+COPY --chown=platform:platform deploy/nginx/lab-gateway/templates \
+    /opt/platform/nginx-templates
 
 USER platform
 ENTRYPOINT ["/usr/local/bin/orchestrator"]

@@ -1,5 +1,11 @@
 name: ${COMPOSE_PROJECT_NAME}
 
+x-default-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: 10m
+    max-file: "3"
+
 services:
   volume-init:
     image: ${ALPINE_IMAGE}
@@ -10,6 +16,7 @@ services:
       - lab-nginx-config:/volumes/lab-nginx
       - ./deploy/volume-init/init-volumes.sh:/opt/platform/init-volumes.sh:ro
     command: ["/bin/sh", "/opt/platform/init-volumes.sh"]
+    logging: *default-logging
 
   docker-socket-proxy:
     image: ${SOCKET_PROXY_IMAGE}
@@ -34,6 +41,7 @@ services:
       retries: 10
       start_period: 5s
     restart: unless-stopped
+    logging: *default-logging
 
   shared-mysql:
     build:
@@ -71,6 +79,33 @@ services:
       retries: 30
       start_period: 30s
     restart: unless-stopped
+    logging: *default-logging
+
+  database-migrate:
+    image: ${MYSQL_IMAGE}
+    environment:
+      MYSQL_HOST: shared-mysql
+      MYSQL_PORT: "3306"
+      MYSQL_PLATFORM_DATABASE: ${MYSQL_PLATFORM_DATABASE}
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD}
+    volumes:
+      - ./scripts/mysql_migrate.sh:/opt/platform/mysql_migrate.sh:ro
+      - ./database/mysql/migrations:/opt/platform/migrations:ro
+    networks:
+      - platform-data-net
+    depends_on:
+      shared-mysql:
+        condition: service_healthy
+    entrypoint: ["/bin/bash", "/opt/platform/mysql_migrate.sh"]
+    read_only: true
+    tmpfs:
+      - /tmp:size=16m,mode=1777
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    restart: "no"
+    logging: *default-logging
 
   orchestrator:
     build:
@@ -88,9 +123,19 @@ services:
       MYSQL_PLATFORM_DATABASE: ${MYSQL_PLATFORM_DATABASE}
       MYSQL_ORCHESTRATOR_USER: ${MYSQL_ORCHESTRATOR_USER}
       MYSQL_ORCHESTRATOR_PASSWORD: ${MYSQL_ORCHESTRATOR_PASSWORD}
+      LAB_MAX_ACTIVE: ${LAB_MAX_ACTIVE:-10}
+      LAB_MAX_TEMP_CONTAINERS: ${LAB_MAX_TEMP_CONTAINERS:-40}
+      LAB_MAX_INSTANCES_PER_SESSION: ${LAB_MAX_INSTANCES_PER_SESSION:-4}
+      LAB_DEFAULT_CPU_CORES: ${LAB_DEFAULT_CPU_CORES:-0.1}
+      LAB_DEFAULT_MEMORY_MB: ${LAB_DEFAULT_MEMORY_MB:-128}
+      LAB_DEFAULT_PIDS_LIMIT: ${LAB_DEFAULT_PIDS_LIMIT:-64}
+      LAB_REDIS_MEMORY_MB: ${LAB_REDIS_MEMORY_MB:-48}
+      LAB_IDLE_TIMEOUT: ${LAB_IDLE_TIMEOUT:-10m}
+      LAB_MAX_DURATION: ${LAB_MAX_DURATION:-30m}
       TZ: ${TZ}
     volumes:
       - orchestrator-socket:/run/platform
+      - lab-nginx-config:/var/lib/platform/nginx-labs
     networks:
       - orchestration-net
       - db-admin-net
@@ -101,6 +146,8 @@ services:
         condition: service_healthy
       shared-mysql:
         condition: service_healthy
+      database-migrate:
+        condition: service_completed_successfully
     read_only: true
     tmpfs:
       - /tmp:size=16m,mode=1777
@@ -115,6 +162,7 @@ services:
       retries: 20
       start_period: 5s
     restart: unless-stopped
+    logging: *default-logging
 
   lab-gateway-nginx:
     build:
@@ -138,6 +186,7 @@ services:
     security_opt:
       - no-new-privileges:true
     restart: unless-stopped
+    logging: *default-logging
 
   platform-api:
     build:
@@ -156,6 +205,11 @@ services:
       MYSQL_PLATFORM_PASSWORD: ${MYSQL_PLATFORM_PASSWORD}
       ORCHESTRATOR_SOCKET_PATH: ${ORCHESTRATOR_SOCKET_PATH}
       LAB_GATEWAY_ADDR: ${LAB_GATEWAY_ADDR}
+      LAB_MAX_ACTIVE: ${LAB_MAX_ACTIVE:-10}
+      LAB_MAX_TEMP_CONTAINERS: ${LAB_MAX_TEMP_CONTAINERS:-40}
+      LAB_MAX_INSTANCES_PER_SESSION: ${LAB_MAX_INSTANCES_PER_SESSION:-4}
+      LAB_IDLE_TIMEOUT: ${LAB_IDLE_TIMEOUT:-10m}
+      LAB_MAX_DURATION: ${LAB_MAX_DURATION:-30m}
       TZ: ${TZ}
     volumes:
       - orchestrator-socket:/run/platform:ro
@@ -166,6 +220,8 @@ services:
     depends_on:
       shared-mysql:
         condition: service_healthy
+      database-migrate:
+        condition: service_completed_successfully
       orchestrator:
         condition: service_healthy
       lab-gateway-nginx:
@@ -184,6 +240,7 @@ services:
       retries: 20
       start_period: 5s
     restart: unless-stopped
+    logging: *default-logging
 
   edge-nginx:
     build:
@@ -208,6 +265,7 @@ services:
     security_opt:
       - no-new-privileges:true
     restart: unless-stopped
+    logging: *default-logging
 
   lab-app:
     profiles:
@@ -234,8 +292,10 @@ services:
       - ALL
     security_opt:
       - no-new-privileges:true
-    pids_limit: ${LAB_DEFAULT_PIDS_LIMIT}
-    mem_limit: ${LAB_DEFAULT_MEMORY_MB}m
+    pids_limit: ${LAB_DEFAULT_PIDS_LIMIT:-64}
+    mem_limit: ${LAB_DEFAULT_MEMORY_MB:-128}m
+    cpus: ${LAB_DEFAULT_CPU_CORES:-0.1}
+    logging: *default-logging
 
 networks:
   platform-edge-net:

@@ -10,6 +10,7 @@
 * Go 高权限编排器
 * Go 动态实验应用镜像
 * 共享 MySQL 8.4 LTS
+* 一次性数据库迁移任务
 * 内部实验 Nginx
 * 受限 Docker Socket Proxy
 
@@ -33,6 +34,7 @@ docker compose ps
 make verify
 docker compose config --quiet
 docker compose --profile images build lab-app
+curl --fail http://127.0.0.1:8080/readyz
 ```
 
 完整需求、架构和脚手架设计位于 `docs/superpowers/specs`。

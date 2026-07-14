@@ -11,6 +11,8 @@ import (
 	sharedconfig "website-gobased/internal/config"
 )
 
+const platformDatabaseName = "platform"
+
 // Config contains the platform API runtime settings.
 type Config struct {
 	Addr           string
@@ -31,6 +33,12 @@ func LoadConfig() (Config, error) {
 	database, err := sharedconfig.Required("MYSQL_PLATFORM_DATABASE")
 	if err != nil {
 		return Config{}, err
+	}
+	if database != platformDatabaseName {
+		return Config{}, fmt.Errorf(
+			"MYSQL_PLATFORM_DATABASE must be %q",
+			platformDatabaseName,
+		)
 	}
 
 	dbConfig := mysql.NewConfig()

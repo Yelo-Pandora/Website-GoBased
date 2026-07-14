@@ -42,6 +42,11 @@ main() {
   validate_identifier "MYSQL_PLATFORM_USER" "${MYSQL_PLATFORM_USER}"
   validate_identifier "MYSQL_ORCHESTRATOR_USER" "${MYSQL_ORCHESTRATOR_USER}"
 
+  if [[ "${MYSQL_PLATFORM_DATABASE}" != "platform" ]]; then
+    echo "MYSQL_PLATFORM_DATABASE must be platform" >&2
+    return 1
+  fi
+
   local escaped_password
   escaped_password="$(escape_sql_string "${MYSQL_ORCHESTRATOR_PASSWORD}")"
 

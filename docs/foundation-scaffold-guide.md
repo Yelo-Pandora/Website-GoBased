@@ -64,6 +64,7 @@ Compose 已准备好共享 UDS 卷，Orchestrator 也已经监听该 Socket。
 | Orchestrator | `services/orchestrator/` | 通过 UDS 接收受限编排命令 |
 | Socket Proxy | `deploy/docker-socket-proxy/` | 限制可以访问的 Docker API 类别 |
 | Shared MySQL | `database/mysql/` | 保存平台数据并承载实验数据库管理过程 |
+| Database Migrate | `scripts/mysql_migrate.sh` | 在服务启动前按版本应用增量数据库迁移 |
 | Lab Gateway | `deploy/nginx/lab-gateway/` | 提供内部实验入口和动态 upstream 加载目录 |
 | Lab App | `services/lab-app/` | 提供未来动态实验容器使用的最小镜像模板 |
 | Volume Init | `deploy/volume-init/` | 初始化共享卷的所有者和目录权限 |
@@ -79,17 +80,20 @@ Compose 已准备好共享 UDS 卷，Orchestrator 也已经监听该 Socket。
 Compose 当前定义以下边界：
 
 - `platform-edge-net` 连接公网入口和平台 API。
-- `platform-data-net` 只允许平台 API 访问共享 MySQL。
+- `platform-data-net` 允许平台 API 和短生命周期迁移任务访问共享 MySQL。
 - `lab-control-net` 连接平台 API 和内部实验网关。
 - `orchestration-net` 连接编排器和 Docker Socket Proxy。
 - `db-admin-net` 允许编排器执行受限数据库管理过程。
 - 除入口网络外，内部网络均设置为 `internal: true`。
 - Go 服务和 Nginx 使用只读根文件系统及最小 Linux capabilities。
 - `volume-init` 成功退出后，依赖共享卷的服务才会启动。
+- `database-migrate` 成功退出后，平台 API 和编排器才会启动。
 - Edge Nginx 等待平台 API 健康后才对外提供完整入口。
 
 阅读 Compose 时不要把 `expose` 或镜像声明的内部端口理解为宿主机端口。
 只有 `ports` 字段会把端口发布到宿主机。
+开发期间 MySQL 额外映射到 `127.0.0.1:3306`，仅用于本机数据库管理工具；
+最终发布验收会移除此映射和对应的宿主机访问网络。
 
 ## 5. 数据库初始化的作用
 
@@ -102,6 +106,10 @@ MySQL 首次使用空数据卷启动时，按文件名顺序执行初始化文�
 3. `002_lab_database_routines.sql` 创建三个实验数据库管理过程。
 4. `003_seed_courses.sql` 写入课程知识地图和课程占位数据。
 5. `004_seed_users.sql` 按环境开关写入本地测试用户。
+
+空数据卷初始化完成后，`database-migrate` 会按文件名读取
+`database/mysql/migrations/`，并使用 `platform.schema_migrations` 记录已执行版本。
+后续结构变更必须新增顺序迁移文件，不能依赖重新创建数据卷。
 
 平台 API 账户只能对 `platform` 数据库执行常规读写操作。
 它不能创建或删除数据库。
@@ -125,7 +133,7 @@ MySQL 首次使用空数据卷启动时，按文件名顺序执行初始化文�
 
 主要限制包括：
 
-- 只有 Edge Nginx 发布宿主机端口。
+- 正式发布时只有 Edge Nginx 发布宿主机端口；开发期暂时保留 MySQL 回环地址映射。
 - Platform API 不挂载 Docker Socket。
 - Orchestrator 通过 Socket Proxy 访问受限 Docker API。
 - 适用服务设置 `read_only: true`。
@@ -344,6 +352,7 @@ docker compose ps -a
 
 ```bash
 curl --fail http://127.0.0.1:8080/healthz
+curl --fail http://127.0.0.1:8080/readyz
 curl --fail http://127.0.0.1:8080/api/v1/system/info
 ```
 
@@ -351,11 +360,12 @@ curl --fail http://127.0.0.1:8080/api/v1/system/info
 
 - 所有常驻服务均为 `healthy`。
 - `volume-init` 以状态码 `0` 退出。
+- `database-migrate` 以状态码 `0` 退出，迁移版本已写入数据库。
 - Vue 页面可以正常打开并显示平台状态。
 - Platform API readiness 显示数据库可用。
 - MySQL 存在八张核心表和三个存储过程。
 - 平台账户和编排器账户符合最小权限要求。
-- 宿主机只能访问 Edge Nginx 发布的端口。
+- 除开发期的 MySQL 回环地址映射外，宿主机只能访问 Edge Nginx 发布的端口。
 - 默认没有运行 Lab App 或 Redis 容器。
 
 ## 10. 后续扩展原则
