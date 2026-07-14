@@ -1,13 +1,11 @@
-// 用于健康检查的HTTP处理程序和响应结构。
+// Package health defines health-check response models.
 package health
 
 import (
-	"encoding/json"
-	"net/http"
 	"time"
 )
 
-// 健康检查响应结构。
+// Response is the shared health-check response.
 type Response struct {
 	Service   string         `json:"service"`
 	Status    string         `json:"status"`
@@ -15,11 +13,12 @@ type Response struct {
 	Details   map[string]any `json:"details,omitempty"`
 }
 
-// Write 将健康检查响应写入HTTP响应。
-func Write(w http.ResponseWriter, statusCode int, response Response) error {
-	response.Timestamp = time.Now().UTC()
-	w.Header().Set("Content-Type", "application/json; charset=utf-8")
-	w.Header().Set("Cache-Control", "no-store")
-	w.WriteHeader(statusCode)
-	return json.NewEncoder(w).Encode(response)
+// NewResponse returns a timestamped health-check response.
+func NewResponse(service, status string, details map[string]any) Response {
+	return Response{
+		Service:   service,
+		Status:    status,
+		Timestamp: time.Now().UTC(),
+		Details:   details,
+	}
 }

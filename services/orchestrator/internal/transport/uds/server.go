@@ -3,7 +3,6 @@ package uds
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -14,8 +13,9 @@ import (
 	"path/filepath"
 	"time"
 
-	"website-gobased/internal/health"
-	"website-gobased/internal/protocol"
+	"github.com/gin-gonic/gin"
+
+	"website-gobased/internal/httpserver"
 )
 
 const maxCommandBodyBytes = 1 << 20
@@ -116,57 +116,10 @@ func listen(socketPath string) (net.Listener, error) {
 	return listener, nil
 }
 
-func newRouter(logger *slog.Logger) http.Handler {
-	mux := http.NewServeMux()
-	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) {
-		if err := health.Write(w, http.StatusOK, health.Response{
-			Service: "orchestrator",
-			Status:  "ok",
-		}); err != nil {
-			logger.Error("write health response", "error", err)
-		}
-	})
-	mux.HandleFunc("POST /v1/commands", func(w http.ResponseWriter, r *http.Request) {
-		r.Body = http.MaxBytesReader(w, r.Body, maxCommandBodyBytes)
-		defer r.Body.Close()
-
-		var command protocol.Command
-		if err := json.NewDecoder(r.Body).Decode(&command); err != nil {
-			writeCommandError(w, logger, http.StatusBadRequest, command, "INVALID_COMMAND", "invalid command body")
-			return
-		}
-		writeCommandError(
-			w,
-			logger,
-			http.StatusNotImplemented,
-			command,
-			"COMMAND_NOT_IMPLEMENTED",
-			"command execution is not implemented in the foundation scaffold",
-		)
-	})
-	return mux
-}
-
-func writeCommandError(
-	w http.ResponseWriter,
-	logger *slog.Logger,
-	statusCode int,
-	command protocol.Command,
-	code string,
-	message string,
-) {
-	w.Header().Set("Content-Type", "application/json; charset=utf-8")
-	w.WriteHeader(statusCode)
-	response := protocol.CommandResponse{
-		CommandID:   command.CommandID,
-		OperationID: command.OperationID,
-		Status:      "rejected",
-		Error: map[string]string{
-			"code":    code,
-			"message": message,
-		},
-	}
-	if err := json.NewEncoder(w).Encode(response); err != nil {
-		logger.Error("write command response", "error", err)
-	}
+func newRouter(logger *slog.Logger) *gin.Engine {
+	handler := newHandler(logger)
+	router := httpserver.NewRouter(logger)
+	router.GET("/healthz", handler.health)
+	router.POST("/v1/commands", handler.command)
+	return router
 }
