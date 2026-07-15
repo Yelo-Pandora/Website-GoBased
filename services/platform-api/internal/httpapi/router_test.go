@@ -8,8 +8,11 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
+	"time"
 
+	platformauth "website-gobased/services/platform-api/internal/auth"
 	"website-gobased/services/platform-api/internal/course"
 )
 
@@ -18,6 +21,47 @@ type pingerStub struct {
 }
 
 type courseServiceStub struct{}
+
+type authenticationServiceStub struct {
+	loginResult platformauth.LoginResult
+	loginErr    error
+	session     platformauth.Session
+	authErr     error
+	csrfToken   string
+	csrfValid   bool
+	logoutErr   error
+}
+
+func (s authenticationServiceStub) Login(
+	_ context.Context,
+	_ string,
+	_ string,
+	_ string,
+) (platformauth.LoginResult, error) {
+	return s.loginResult, s.loginErr
+}
+
+func (s authenticationServiceStub) Authenticate(
+	_ context.Context,
+	_ string,
+) (platformauth.Session, error) {
+	return s.session, s.authErr
+}
+
+func (s authenticationServiceStub) CSRFToken(_ platformauth.Session) string {
+	return s.csrfToken
+}
+
+func (s authenticationServiceStub) ValidateCSRF(
+	_ platformauth.Session,
+	_ string,
+) bool {
+	return s.csrfValid
+}
+
+func (s authenticationServiceStub) Logout(_ context.Context, _ uint64) error {
+	return s.logoutErr
+}
 
 func (courseServiceStub) List(_ context.Context) ([]course.Course, error) {
 	return []course.Course{{ID: 1, Slug: "standalone-architecture"}}, nil
@@ -58,6 +102,8 @@ func TestReadiness(t *testing.T) {
 				pingerStub{err: test.pingError},
 				"http://lab-gateway:8080",
 				courseServiceStub{},
+				authenticationServiceStub{},
+				AuthConfig{CookieName: "session"},
 			)
 			request := httptest.NewRequest(http.MethodGet, "/readyz", nil)
 			response := httptest.NewRecorder()
@@ -76,6 +122,8 @@ func TestSystemInfo(t *testing.T) {
 		pingerStub{},
 		"http://lab-gateway:8080",
 		courseServiceStub{},
+		authenticationServiceStub{},
+		AuthConfig{CookieName: "session"},
 	)
 	request := httptest.NewRequest(http.MethodGet, "/api/v1/system/info", nil)
 	response := httptest.NewRecorder()
@@ -92,6 +140,8 @@ func TestCourseRoutes(t *testing.T) {
 		pingerStub{},
 		"http://lab-gateway:8080",
 		courseServiceStub{},
+		authenticationServiceStub{},
+		AuthConfig{CookieName: "session"},
 	)
 
 	tests := []struct {
@@ -113,13 +163,18 @@ func TestCourseRoutes(t *testing.T) {
 }
 
 func TestCreateLabReturnsReservedResponse(t *testing.T) {
+	session := platformauth.Session{ID: 1}
 	router := NewRouter(
 		slog.New(slog.NewTextHandler(io.Discard, nil)),
 		pingerStub{},
 		"http://lab-gateway:8080",
 		courseServiceStub{},
+		authenticationServiceStub{session: session, csrfValid: true},
+		AuthConfig{CookieName: "session"},
 	)
 	request := httptest.NewRequest(http.MethodPost, "/api/v1/labs", nil)
+	request.AddCookie(&http.Cookie{Name: "session", Value: "test-token"})
+	request.Header.Set(csrfHeaderName, "test-csrf")
 	response := httptest.NewRecorder()
 	router.ServeHTTP(response, request)
 
@@ -144,5 +199,111 @@ func TestCreateLabReturnsReservedResponse(t *testing.T) {
 			"error code = %q; want LABS_NOT_IMPLEMENTED",
 			body.Error.Code,
 		)
+	}
+}
+
+func TestAuthenticationRoutes(t *testing.T) {
+	expiresAt := time.Date(2026, time.July, 15, 12, 0, 0, 0, time.UTC)
+	session := platformauth.Session{
+		ID: 1,
+		User: platformauth.User{
+			ID:       7,
+			Username: "learner",
+			Status:   "active",
+		},
+		Token:     "session-token",
+		ExpiresAt: expiresAt,
+	}
+	authentication := authenticationServiceStub{
+		loginResult: platformauth.LoginResult{
+			Session:   session,
+			CSRFToken: "csrf-token",
+		},
+		session:   session,
+		csrfToken: "csrf-token",
+		csrfValid: true,
+	}
+	router := NewRouter(
+		slog.New(slog.NewTextHandler(io.Discard, nil)),
+		pingerStub{},
+		"http://lab-gateway:8080",
+		courseServiceStub{},
+		authentication,
+		AuthConfig{CookieName: "session"},
+	)
+
+	t.Run("login", func(t *testing.T) {
+		request := httptest.NewRequest(
+			http.MethodPost,
+			"/api/v1/auth/login",
+			strings.NewReader(`{"username":"learner","password":"password"}`),
+		)
+		request.Header.Set("Content-Type", "application/json")
+		response := httptest.NewRecorder()
+		router.ServeHTTP(response, request)
+
+		if response.Code != http.StatusOK {
+			t.Fatalf("status = %d; want %d", response.Code, http.StatusOK)
+		}
+		cookies := response.Result().Cookies()
+		if len(cookies) != 1 || cookies[0].Name != "session" {
+			t.Fatalf("cookies = %v; want Session Cookie", cookies)
+		}
+		if !cookies[0].HttpOnly || cookies[0].SameSite != http.SameSiteStrictMode {
+			t.Fatalf("Session Cookie flags = %#v", cookies[0])
+		}
+	})
+
+	t.Run("current user requires authentication", func(t *testing.T) {
+		request := httptest.NewRequest(http.MethodGet, "/api/v1/auth/me", nil)
+		response := httptest.NewRecorder()
+		router.ServeHTTP(response, request)
+		if response.Code != http.StatusUnauthorized {
+			t.Fatalf("status = %d; want %d", response.Code, http.StatusUnauthorized)
+		}
+	})
+
+	t.Run("current user", func(t *testing.T) {
+		request := httptest.NewRequest(http.MethodGet, "/api/v1/auth/me", nil)
+		request.AddCookie(&http.Cookie{Name: "session", Value: "session-token"})
+		response := httptest.NewRecorder()
+		router.ServeHTTP(response, request)
+		if response.Code != http.StatusOK {
+			t.Fatalf("status = %d; want %d", response.Code, http.StatusOK)
+		}
+	})
+
+	t.Run("logout", func(t *testing.T) {
+		request := httptest.NewRequest(http.MethodPost, "/api/v1/auth/logout", nil)
+		request.AddCookie(&http.Cookie{Name: "session", Value: "session-token"})
+		request.Header.Set(csrfHeaderName, "csrf-token")
+		response := httptest.NewRecorder()
+		router.ServeHTTP(response, request)
+		if response.Code != http.StatusOK {
+			t.Fatalf("status = %d; want %d", response.Code, http.StatusOK)
+		}
+	})
+}
+
+func TestLogoutRejectsInvalidCSRF(t *testing.T) {
+	router := NewRouter(
+		slog.New(slog.NewTextHandler(io.Discard, nil)),
+		pingerStub{},
+		"http://lab-gateway:8080",
+		courseServiceStub{},
+		authenticationServiceStub{
+			session:   platformauth.Session{ID: 1},
+			csrfValid: false,
+		},
+		AuthConfig{CookieName: "session"},
+	)
+	request := httptest.NewRequest(http.MethodPost, "/api/v1/auth/logout", nil)
+	request.AddCookie(&http.Cookie{Name: "session", Value: "session-token"})
+	request.Header.Set(csrfHeaderName, "wrong-token")
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, request)
+
+	if response.Code != http.StatusForbidden {
+		t.Fatalf("status = %d; want %d", response.Code, http.StatusForbidden)
 	}
 }

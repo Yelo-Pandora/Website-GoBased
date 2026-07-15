@@ -11,6 +11,7 @@ import (
 
 	_ "github.com/go-sql-driver/mysql"
 
+	platformauth "website-gobased/services/platform-api/internal/auth"
 	"website-gobased/services/platform-api/internal/course"
 	"website-gobased/services/platform-api/internal/httpapi"
 )
@@ -29,6 +30,16 @@ func Run(ctx context.Context, cfg Config, logger *slog.Logger) error {
 	if err := waitForDatabase(ctx, database); err != nil {
 		return err
 	}
+	authentication := platformauth.NewService(
+		platformauth.NewRepository(database),
+		platformauth.NewLimiter(
+			cfg.AuthLoginWindow,
+			cfg.AuthLoginMaxFailures,
+			cfg.AuthLoginBlockDuration,
+			cfg.AuthLoginMaxEntries,
+		),
+		cfg.AuthSessionTTL,
+	)
 
 	server := &http.Server{
 		Addr: cfg.Addr,
@@ -40,6 +51,11 @@ func Run(ctx context.Context, cfg Config, logger *slog.Logger) error {
 				course.NewRepository(database),
 				course.NewContentStore(),
 			),
+			authentication,
+			httpapi.AuthConfig{
+				CookieName:   cfg.AuthCookieName,
+				CookieSecure: cfg.AuthCookieSecure,
+			},
 		),
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       10 * time.Second,

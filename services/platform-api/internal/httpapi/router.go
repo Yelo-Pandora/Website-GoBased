@@ -26,15 +26,44 @@ func NewRouter(
 	database databasePinger,
 	labGatewayAddr string,
 	courses courseService,
+	authentication authenticationService,
+	authConfig AuthConfig,
 ) *gin.Engine {
-	handler := newHandler(logger, database, labGatewayAddr, courses)
+	handler := newHandler(
+		logger,
+		database,
+		labGatewayAddr,
+		courses,
+		authentication,
+		authConfig,
+	)
 	router := httpserver.NewRouter(logger)
 	router.GET("/healthz", handler.health)
 	router.GET("/readyz", handler.readiness)
 	router.GET("/api/v1/system/info", handler.systemInfo)
 	api := router.Group("/api/v1")
-	api.GET("/courses", handler.listCourses)
-	api.GET("/courses/:slug", handler.getCourse)
-	api.POST("/labs", handler.createLab)
+	api.POST("/auth/login", handler.login)
+	api.GET(
+		"/auth/me",
+		handler.optionalAuthentication,
+		handler.requireAuthentication,
+		handler.currentUser,
+	)
+	api.POST(
+		"/auth/logout",
+		handler.optionalAuthentication,
+		handler.requireAuthentication,
+		handler.requireCSRF,
+		handler.logout,
+	)
+	api.GET("/courses", handler.optionalAuthentication, handler.listCourses)
+	api.GET("/courses/:slug", handler.optionalAuthentication, handler.getCourse)
+	api.POST(
+		"/labs",
+		handler.optionalAuthentication,
+		handler.requireAuthentication,
+		handler.requireCSRF,
+		handler.createLab,
+	)
 	return router
 }

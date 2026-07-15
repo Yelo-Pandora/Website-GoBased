@@ -21,7 +21,7 @@ BEGIN
       status
     ) VALUES (
       'learner',
-      '$2b$12$WmBVqMXazj6zMhauomUF0.HtLO3A0m4YeD.NDpgPSR5.H92kB/Ccy',
+      '$2a$12$N.3Y98EMPQbRcXBzP.p4puDZbdb3s13IvaixDWDTAW2uBuBivxO3a',
       'active'
     ) ON DUPLICATE KEY UPDATE
       password_hash = VALUES(password_hash),

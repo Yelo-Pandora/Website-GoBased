@@ -20,6 +20,8 @@ type handler struct {
 	database       databasePinger
 	labGatewayAddr string
 	courses        courseService
+	authentication authenticationService
+	authConfig     AuthConfig
 }
 
 func newHandler(
@@ -27,12 +29,16 @@ func newHandler(
 	database databasePinger,
 	labGatewayAddr string,
 	courses courseService,
+	authentication authenticationService,
+	authConfig AuthConfig,
 ) *handler {
 	return &handler{
 		logger:         logger,
 		database:       database,
 		labGatewayAddr: labGatewayAddr,
 		courses:        courses,
+		authentication: authentication,
+		authConfig:     authConfig,
 	}
 }
 
