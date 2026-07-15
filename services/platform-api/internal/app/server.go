@@ -14,6 +14,8 @@ import (
 	platformauth "website-gobased/services/platform-api/internal/auth"
 	"website-gobased/services/platform-api/internal/course"
 	"website-gobased/services/platform-api/internal/httpapi"
+	"website-gobased/services/platform-api/internal/operation"
+	"website-gobased/services/platform-api/internal/orchestrator"
 )
 
 // Run starts the platform API and blocks until shutdown.
@@ -40,6 +42,26 @@ func Run(ctx context.Context, cfg Config, logger *slog.Logger) error {
 		),
 		cfg.AuthSessionTTL,
 	)
+	orchestratorClient := orchestrator.NewClient(
+		cfg.OrchestratorSocketPath,
+		cfg.LabOrchestratorTimeout,
+	)
+	defer orchestratorClient.CloseIdleConnections()
+	operationWorker, err := operation.NewWorker(
+		logger,
+		operation.NewRepository(database),
+		orchestratorClient,
+		operation.WorkerConfig{
+			Owner:          cfg.LabOperationWorkerID,
+			PollInterval:   cfg.LabOperationPoll,
+			LeaseDuration:  cfg.LabOperationLease,
+			CommandTimeout: cfg.LabOrchestratorTimeout,
+		},
+	)
+	if err != nil {
+		return fmt.Errorf("configure lab operation worker: %w", err)
+	}
+	go operationWorker.Run(ctx)
 
 	server := &http.Server{
 		Addr: cfg.Addr,

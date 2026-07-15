@@ -20,6 +20,14 @@ type Config struct {
 	Addr                   string
 	LabGatewayAddr         string
 	DatabaseDSN            string
+	OrchestratorSocketPath string
+	LabMaxActive           int
+	LabMaxTempContainers   int
+	LabMaxInstances        int
+	LabOperationWorkerID   string
+	LabOperationPoll       time.Duration
+	LabOperationLease      time.Duration
+	LabOrchestratorTimeout time.Duration
 	AuthSessionTTL         time.Duration
 	AuthCookieName         string
 	AuthCookieSecure       bool
@@ -102,11 +110,63 @@ func LoadConfig() (Config, error) {
 	if err != nil {
 		return Config{}, err
 	}
+	labMaxActive, err := positiveInt("LAB_MAX_ACTIVE", 10)
+	if err != nil {
+		return Config{}, err
+	}
+	labMaxTempContainers, err := positiveInt("LAB_MAX_TEMP_CONTAINERS", 40)
+	if err != nil {
+		return Config{}, err
+	}
+	labMaxInstances, err := positiveInt("LAB_MAX_INSTANCES_PER_SESSION", 4)
+	if err != nil {
+		return Config{}, err
+	}
+	labOperationPoll, err := duration("LAB_OPERATION_POLL_INTERVAL", 500*time.Millisecond)
+	if err != nil {
+		return Config{}, err
+	}
+	labOperationLease, err := duration("LAB_OPERATION_LEASE_DURATION", 30*time.Second)
+	if err != nil {
+		return Config{}, err
+	}
+	labOrchestratorTimeout, err := duration("LAB_ORCHESTRATOR_TIMEOUT", 20*time.Second)
+	if err != nil {
+		return Config{}, err
+	}
+	if labOperationLease <= labOrchestratorTimeout {
+		return Config{}, fmt.Errorf(
+			"LAB_OPERATION_LEASE_DURATION must exceed LAB_ORCHESTRATOR_TIMEOUT",
+		)
+	}
+	labOperationWorkerID := sharedconfig.String(
+		"LAB_OPERATION_WORKER_ID",
+		sharedconfig.String("HOSTNAME", "platform-api"),
+	)
+	if !validWorkerID(labOperationWorkerID) {
+		return Config{}, fmt.Errorf("LAB_OPERATION_WORKER_ID contains invalid characters")
+	}
+	orchestratorSocketPath := sharedconfig.String(
+		"ORCHESTRATOR_SOCKET_PATH",
+		"/run/platform/orchestrator.sock",
+	)
+	if strings.TrimSpace(orchestratorSocketPath) != orchestratorSocketPath ||
+		orchestratorSocketPath == "" {
+		return Config{}, fmt.Errorf("ORCHESTRATOR_SOCKET_PATH must not be empty")
+	}
 
 	return Config{
 		Addr:                   addr,
 		LabGatewayAddr:         sharedconfig.String("LAB_GATEWAY_ADDR", "http://lab-gateway-nginx:8080"),
 		DatabaseDSN:            dbConfig.FormatDSN(),
+		OrchestratorSocketPath: orchestratorSocketPath,
+		LabMaxActive:           labMaxActive,
+		LabMaxTempContainers:   labMaxTempContainers,
+		LabMaxInstances:        labMaxInstances,
+		LabOperationWorkerID:   labOperationWorkerID,
+		LabOperationPoll:       labOperationPoll,
+		LabOperationLease:      labOperationLease,
+		LabOrchestratorTimeout: labOrchestratorTimeout,
 		AuthSessionTTL:         authSessionTTL,
 		AuthCookieName:         authCookieName,
 		AuthCookieSecure:       authCookieSecure,
@@ -115,6 +175,14 @@ func LoadConfig() (Config, error) {
 		AuthLoginBlockDuration: authLoginBlockDuration,
 		AuthLoginMaxEntries:    authLoginMaxEntries,
 	}, nil
+}
+
+func positiveInt(key string, fallback int) (int, error) {
+	value, err := sharedconfig.Int(key, fallback)
+	if err != nil || value <= 0 {
+		return 0, fmt.Errorf("%s must be a positive integer", key)
+	}
+	return value, nil
 }
 
 func duration(key string, fallback time.Duration) (time.Duration, error) {
@@ -144,6 +212,22 @@ func validCookieName(name string) bool {
 			r >= 'A' && r <= 'Z' ||
 			r >= '0' && r <= '9' ||
 			r == '-' || r == '_' {
+			continue
+		}
+		return false
+	}
+	return true
+}
+
+func validWorkerID(value string) bool {
+	if value == "" || len(value) > 128 {
+		return false
+	}
+	for _, r := range value {
+		if r >= 'a' && r <= 'z' ||
+			r >= 'A' && r <= 'Z' ||
+			r >= '0' && r <= '9' ||
+			r == '-' || r == '_' || r == '.' {
 			continue
 		}
 		return false
