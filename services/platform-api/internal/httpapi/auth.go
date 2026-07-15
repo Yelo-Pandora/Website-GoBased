@@ -245,6 +245,15 @@ func currentSession(ctx *gin.Context) (platformauth.Session, bool) {
 	return session, ok
 }
 
+func currentUserID(ctx *gin.Context) *uint64 {
+	session, ok := currentSession(ctx)
+	if !ok {
+		return nil
+	}
+	userID := session.User.ID
+	return &userID
+}
+
 func (h *handler) setSessionCookie(
 	ctx *gin.Context,
 	token string,

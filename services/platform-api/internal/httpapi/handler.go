@@ -43,7 +43,8 @@ func newHandler(
 }
 
 func (h *handler) listCourses(ctx *gin.Context) {
-	courses, err := h.courses.List(ctx.Request.Context())
+	userID := currentUserID(ctx)
+	courses, err := h.courses.List(ctx.Request.Context(), userID)
 	if err != nil {
 		h.logger.ErrorContext(ctx.Request.Context(), "list courses", "error", err)
 		httpserver.WriteError(
@@ -57,14 +58,18 @@ func (h *handler) listCourses(ctx *gin.Context) {
 	ctx.JSON(http.StatusOK, gin.H{
 		"data": gin.H{"courses": courses},
 		"meta": gin.H{
-			"authenticated": false,
+			"authenticated": userID != nil,
 			"total":         len(courses),
 		},
 	})
 }
 
 func (h *handler) getCourse(ctx *gin.Context) {
-	detail, err := h.courses.Get(ctx.Request.Context(), ctx.Param("slug"))
+	detail, err := h.courses.Get(
+		ctx.Request.Context(),
+		ctx.Param("slug"),
+		currentUserID(ctx),
+	)
 	if errors.Is(err, course.ErrNotFound) {
 		httpserver.WriteError(
 			ctx,

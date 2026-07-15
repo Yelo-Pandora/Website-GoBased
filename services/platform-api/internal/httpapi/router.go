@@ -16,8 +16,8 @@ type databasePinger interface {
 }
 
 type courseService interface {
-	List(ctx context.Context) ([]course.Course, error)
-	Get(ctx context.Context, slug string) (course.Detail, error)
+	List(ctx context.Context, userID *uint64) ([]course.Course, error)
+	Get(ctx context.Context, slug string, userID *uint64) (course.Detail, error)
 }
 
 // NewRouter builds the platform API routes.

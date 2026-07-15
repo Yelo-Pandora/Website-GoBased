@@ -22,6 +22,10 @@ type pingerStub struct {
 
 type courseServiceStub struct{}
 
+type courseServiceCaptureStub struct {
+	listUserID *uint64
+}
+
 type authenticationServiceStub struct {
 	loginResult platformauth.LoginResult
 	loginErr    error
@@ -63,14 +67,37 @@ func (s authenticationServiceStub) Logout(_ context.Context, _ uint64) error {
 	return s.logoutErr
 }
 
-func (courseServiceStub) List(_ context.Context) ([]course.Course, error) {
+func (courseServiceStub) List(
+	_ context.Context,
+	_ *uint64,
+) ([]course.Course, error) {
 	return []course.Course{{ID: 1, Slug: "standalone-architecture"}}, nil
 }
 
-func (courseServiceStub) Get(_ context.Context, slug string) (course.Detail, error) {
+func (courseServiceStub) Get(
+	_ context.Context,
+	slug string,
+	_ *uint64,
+) (course.Detail, error) {
 	if slug == "missing" {
 		return course.Detail{}, course.ErrNotFound
 	}
+	return course.Detail{Course: course.Course{ID: 1, Slug: slug}}, nil
+}
+
+func (s *courseServiceCaptureStub) List(
+	_ context.Context,
+	userID *uint64,
+) ([]course.Course, error) {
+	s.listUserID = userID
+	return []course.Course{{ID: 1, Slug: "standalone-architecture"}}, nil
+}
+
+func (s *courseServiceCaptureStub) Get(
+	_ context.Context,
+	slug string,
+	_ *uint64,
+) (course.Detail, error) {
 	return course.Detail{Course: course.Course{ID: 1, Slug: slug}}, nil
 }
 
@@ -159,6 +186,43 @@ func TestCourseRoutes(t *testing.T) {
 		if response.Code != test.wantStatus {
 			t.Errorf("GET %s status = %d; want %d", test.path, response.Code, test.wantStatus)
 		}
+	}
+}
+
+func TestCourseListUsesAuthenticatedUser(t *testing.T) {
+	courses := &courseServiceCaptureStub{}
+	router := NewRouter(
+		slog.New(slog.NewTextHandler(io.Discard, nil)),
+		pingerStub{},
+		"http://lab-gateway:8080",
+		courses,
+		authenticationServiceStub{session: platformauth.Session{
+			ID:   1,
+			User: platformauth.User{ID: 7, Username: "learner", Status: "active"},
+		}},
+		AuthConfig{CookieName: "session"},
+	)
+	request := httptest.NewRequest(http.MethodGet, "/api/v1/courses", nil)
+	request.AddCookie(&http.Cookie{Name: "session", Value: "session-token"})
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, request)
+
+	if response.Code != http.StatusOK {
+		t.Fatalf("status = %d; want %d", response.Code, http.StatusOK)
+	}
+	if courses.listUserID == nil || *courses.listUserID != 7 {
+		t.Fatalf("List() user ID = %v; want 7", courses.listUserID)
+	}
+	var body struct {
+		Meta struct {
+			Authenticated bool `json:"authenticated"`
+		} `json:"meta"`
+	}
+	if err := json.Unmarshal(response.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if !body.Meta.Authenticated {
+		t.Fatal("meta.authenticated = false; want true")
 	}
 }
 
