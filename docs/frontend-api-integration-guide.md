@@ -59,7 +59,7 @@ Accept: application/json
 Content-Type: application/json
 ```
 
-认证预计使用服务端 Session Cookie。
+认证使用服务端 Session Cookie。
 浏览器请求必须允许携带 Cookie：
 
 ```javascript
@@ -81,15 +81,15 @@ SDS 已确认以下安全规则：
 - Session Token 和 CSRF Token 不得进入 URL 或日志。
 - 需要认证的状态变更请求必须通过 CSRF 校验。
 
-以下名称尚未由 SDS 固定，本文采用前端草案名称：
+当前接口固定使用以下名称：
 
 ```http
 Cookie: session=<http-only-token>
 X-CSRF-Token: <csrf-token>
 ```
 
-建议登录响应在 JSON 中返回 `csrfToken`，由前端保存在内存中。
-Cookie 名称、CSRF Header 名称和 Token 刷新策略需要后端确认。
+登录和 `auth/me` 响应在 JSON 中返回 `csrfToken`，由前端保存在内存中。
+页面刷新后应先调用 `auth/me`，重新取得同一 Session 对应的 CSRF Token。
 
 ### 2.4 operationId
 
@@ -123,11 +123,11 @@ SDS 只要求唯一性，没有固定 UUID 格式。
 | --- | --- | --- | --- |
 | `available` | GET | `/healthz` | Edge Nginx 存活检查 |
 | `available` | GET | `/api/v1/system/info` | 脚手架构建信息 |
-| `reserved` | GET | `/api/v1/courses` | 课程和知识地图列表 |
-| `planned` | GET | `/api/v1/courses/:id` | 课程详情和理论内容 |
-| `planned` | POST | `/api/v1/auth/login` | 测试账户登录 |
-| `planned` | POST | `/api/v1/auth/logout` | 注销当前 Session |
-| `planned` | GET | `/api/v1/auth/me` | 获取当前登录用户 |
+| `available` | GET | `/api/v1/courses` | 课程和知识地图列表 |
+| `available` | GET | `/api/v1/courses/:slug` | 课程详情和理论内容 |
+| `available` | POST | `/api/v1/auth/login` | 测试账户登录 |
+| `available` | POST | `/api/v1/auth/logout` | 注销当前 Session |
+| `available` | GET | `/api/v1/auth/me` | 获取当前登录用户 |
 | `reserved` | POST | `/api/v1/labs` | 创建实验 |
 | `planned` | GET | `/api/v1/labs/:id` | 获取完整实验快照 |
 | `planned` | POST | `/api/v1/labs/:id/actions` | 提交白名单实验动作 |
@@ -181,7 +181,7 @@ SDS 只要求唯一性，没有固定 UUID 格式。
 ## 5. 课程端点
 
 课程允许匿名读取。
-已登录用户的响应可以附带个人学习进度。
+有效 Session 用户的响应会附带已经存在的个人学习进度。
 
 ### 5.1 `GET /api/v1/courses`
 
@@ -189,7 +189,7 @@ SDS 只要求唯一性，没有固定 UUID 格式。
 
 请求没有 JSON Body。
 
-建议成功响应：`200 OK`
+成功响应：`200 OK`
 
 ```json
 {
@@ -243,7 +243,8 @@ SDS 只要求唯一性，没有固定 UUID 格式。
 - `progress.lastViewedAt`
 - `progress.lastLabId`
 
-`labAvailable`、`data` Envelope 和 `meta` 是前端草案字段。
+`labAvailable`、`data` Envelope 和 `meta` 已纳入正式 OpenAPI 契约。
+`meta.authenticated` 由服务端 Session 解析结果产生，不由前端传入。
 
 课程状态当前数据库允许：
 
@@ -259,7 +260,7 @@ SDS 只要求唯一性，没有固定 UUID 格式。
 
 请求没有 JSON Body。
 
-建议成功响应：`200 OK`
+成功响应：`200 OK`
 
 ```json
 {
@@ -307,19 +308,22 @@ SDS 只要求唯一性，没有固定 UUID 格式。
 
 `content` 是 UTF-8 Markdown 正文，`contentFormat` 当前固定为 `markdown`。
 `implementation` 和 `lab` 提供调用链、关键概念与实验可用范围。
+登录用户成功读取详情后，服务端会把 `viewed` 设为 `true` 并更新 `lastViewedAt`。
+匿名用户读取详情不会创建 `course_progress` 记录。
 
-建议错误：
+错误：
 
 - `404 COURSE_NOT_FOUND`
 
 ## 6. 认证端点
 
 MVP 不提供公开注册。
-只有管理员预创建且未禁用的测试账户可以登录。
+只有初始化脚本或受信任本机维护预创建且未禁用的测试账户可以登录。
+默认本地验收账号为 `learner`，密码为 `example-password`。
 
 ### 6.1 `POST /api/v1/auth/login`
 
-状态：`planned`
+状态：`available`
 
 请求 JSON：
 
@@ -330,7 +334,7 @@ MVP 不提供公开注册。
 }
 ```
 
-建议成功响应：`200 OK`
+成功响应：`200 OK`
 
 ```json
 {
@@ -346,34 +350,31 @@ MVP 不提供公开注册。
 }
 ```
 
-同时预计返回 Session Cookie：
+同时返回 Session Cookie：
 
 ```http
 Set-Cookie: session=<opaque-token>; HttpOnly; SameSite=Strict; Path=/
 ```
 
-建议错误：
+错误：
 
 - `400 VALIDATION_FAILED`
 - `401 INVALID_CREDENTIALS`
 - `403 ACCOUNT_DISABLED`
 - `429 LOGIN_RATE_LIMITED`
+- `500 INTERNAL_ERROR`
 
-这些认证错误码尚未在 SRS 的稳定错误码列表中逐项确认。
+默认限流策略为 5 分钟内最多 5 次失败，超过后阻止 10 分钟。
+登录成功后会清除该用户名和客户端地址对应的失败记录。
 
 ### 6.2 `POST /api/v1/auth/logout`
 
-状态：`planned`
+状态：`available`
 
 请求需要 Session Cookie 和 CSRF Header。
+请求没有 JSON Body。
 
-建议请求 JSON：
-
-```json
-{}
-```
-
-建议成功响应：`200 OK`
+成功响应：`200 OK`
 
 ```json
 {
@@ -383,20 +384,21 @@ Set-Cookie: session=<opaque-token>; HttpOnly; SameSite=Strict; Path=/
 }
 ```
 
-服务端应撤销 Session，并返回过期 Cookie。
+服务端撤销 Session，并返回过期 Cookie。
 
-建议错误：
+错误：
 
 - `401 AUTH_REQUIRED`
 - `403 CSRF_INVALID`
+- `500 INTERNAL_ERROR`
 
 ### 6.3 `GET /api/v1/auth/me`
 
-状态：`planned`
+状态：`available`
 
 请求没有 JSON Body。
 
-建议成功响应：`200 OK`
+成功响应：`200 OK`
 
 ```json
 {
@@ -407,28 +409,24 @@ Set-Cookie: session=<opaque-token>; HttpOnly; SameSite=Strict; Path=/
       "status": "active"
     },
     "csrfToken": "csrf_9a7c1f6b2d4e8a0c",
-    "sessionExpiresAt": "2026-07-13T14:30:00Z",
-    "activeLabId": "lab_01J2M8Y5A4D7KQ2V9N6P3R1T0X"
+    "sessionExpiresAt": "2026-07-13T14:30:00Z"
   }
 }
 ```
 
-`activeLabId` 是解决页面刷新后恢复活动实验入口的建议字段。
-SDS 没有定义单独的“获取当前活动实验”端点。
+`activeLabId` 尚未返回，将在实验控制面实现时确定恢复活动实验入口的契约。
 
-未登录建议响应：`401 Unauthorized`
+未登录响应：`401 Unauthorized`
 
 ```json
 {
   "error": {
     "code": "AUTH_REQUIRED",
-    "message": "Authentication is required.",
-    "details": {}
-  }
+    "message": "authentication is required"
+  },
+  "requestId": "9d7d45bd25bf4b7e8d89998ad66578d6"
 }
 ```
-
-是否对匿名用户返回 `401`，还是返回 `200` 和 `user: null`，需要后端确认。
 
 ## 7. 实验端点
 
@@ -1029,6 +1027,7 @@ SDS 没有固定错误 JSON Envelope。
 | 400 | `VALIDATION_FAILED` | JSON 或字段格式不合法 |
 | 401 | `AUTH_REQUIRED` | 未登录或 Session 无效 |
 | 401 | `INVALID_CREDENTIALS` | 登录凭据错误 |
+| 403 | `ACCOUNT_DISABLED` | 登录账号已禁用 |
 | 403 | `CSRF_INVALID` | CSRF Token 缺失或错误 |
 | 403 | `LAB_NOT_OWNED` | 实验或实例不属于当前用户 |
 | 404 | `COURSE_NOT_FOUND` | 课程不存在 |
@@ -1044,13 +1043,14 @@ SDS 没有固定错误 JSON Envelope。
 | 503 | `DOCKER_UNAVAILABLE` | Docker 控制面不可用 |
 | 503 | `NGINX_CONFIG_INVALID` | 新 upstream 配置校验失败 |
 
-HTTP 状态映射是本文建议，稳定错误码中的部分名称来自 SRS。
+认证、课程和当前实验占位端点的状态映射已经写入 OpenAPI。
+后续实验错误码仍将在对应阶段继续补充。
 
 ## 10. 前端 Mock 建议
 
-后端实现前，Mock 层建议具备以下特性：
+实验控制面实现前，Mock 层建议具备以下特性：
 
-- 使用本文的 `planned` JSON 作为页面模型起点。
+- 仅对仍标记为 `planned` 的实验端点使用 Mock。
 - 把所有枚举集中定义，不在组件中散落字符串。
 - 所有状态变更先返回 `202` 和 `pending` Operation。
 - 通过模拟 SSE 把 Operation 更新为 `running` 和 `succeeded`。
@@ -1101,25 +1101,19 @@ Proxy。
 内部 UDS Command 和 Lab App 内部 API 只用于确认边界。
 它们没有被转换成浏览器公开端点。
 
-## 13. 待后端确认的问题
+## 13. 后续实验阶段待确认的问题
 
-在把本文升级为正式 OpenAPI 前，需要确认：
+认证、课程、Session Cookie、CSRF Header、匿名 `auth/me` 响应和课程 `slug` 已写入正式 OpenAPI。
+后续实验阶段仍需确认：
 
-1. 成功响应是否统一使用 `data` 和 `meta` Envelope。
-2. 错误响应是否采用本文建议的 `error` Envelope。
-3. Session Cookie、CSRF Header 和 CSRF Token 返回方式。
-4. `GET /auth/me` 对匿名用户返回 `401` 还是 `200 user: null`。
-5. 课程详情路径使用数字 ID 还是 `slug`。
-6. 课程静态正文、实现说明和实验能力的最终 JSON 结构。
-7. Lab API 对外使用的稳定 `instanceId` 格式。
-8. 外部 `actionType` 枚举及每个动作的参数 Schema。
-9. 固定权重的允许范围和总和规则。
-10. 缓存实验场景、保护策略和故障触发动作枚举。
-11. DELETE 请求的 `operationId` 放在 Body 还是 Header。
-12. 是否增加独立 Operation 查询端点。
-13. 页面刷新后 SSE 补发使用 Header 还是 Query 参数。
-14. SSE 事件类型、事件保留数量和补发时间窗口。
-15. HTTP 状态码与稳定业务错误码的最终映射。
-16. 是否在 `auth/me` 返回 `activeLabId`。
+1. Lab API 对外使用的稳定 `instanceId` 格式。
+2. 外部 `actionType` 枚举及每个动作的参数 Schema。
+3. 固定权重的允许范围和总和规则。
+4. 缓存实验场景、保护策略和故障触发动作枚举。
+5. DELETE 请求的 `operationId` 放在 Body 还是 Header。
+6. 是否增加独立 Operation 查询端点。
+7. 页面刷新后 SSE 补发使用 Header 还是 Query 参数。
+8. SSE 事件类型、事件保留数量和补发时间窗口。
+9. `auth/me` 是否在实验阶段增加 `activeLabId`。
 
-这些问题确认后，应同步更新 OpenAPI，并以 OpenAPI 作为前后端正式契约。
+每个实验阶段完成后都应同步更新 OpenAPI，并继续以 OpenAPI 作为前后端正式契约。

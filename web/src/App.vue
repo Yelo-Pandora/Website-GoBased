@@ -15,6 +15,7 @@ onMounted(() => {
     persistAuthorization: true,
     tryItOutEnabled: true,
     url: '/platform-api.openapi.yaml',
+    withCredentials: true,
   });
 });
 </script>
