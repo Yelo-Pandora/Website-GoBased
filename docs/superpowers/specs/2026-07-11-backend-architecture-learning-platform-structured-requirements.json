@@ -3,18 +3,18 @@
   "project_name": "Backend Architecture Learning Platform",
   "feature_id": "backend_architecture_learning_platform_mvp",
   "feature_name": "互联网后端架构学习平台MVP",
-  "source_path": "2026-07-10 initial user request and architecture image; 2026-07-10 to 2026-07-11 approved clarification dialogue",
+  "source_path": "2026-07-10 initial user request and architecture image; 2026-07-10 to 2026-07-11 approved clarification dialogue; 2026-07-15 authentication and course progress scope amendment",
   "actors": [
     "visitor",
     "test_user",
-    "administrator",
+    "trusted_maintainer",
     "platform_control_plane",
     "lab_runtime"
   ],
   "preconditions": [
     "The target Linux server provides Docker and Docker Compose.",
     "Experiment images are pre-pulled before the limited user test.",
-    "Test accounts are created by an administrator."
+    "Test accounts are seeded during initialization or maintained through the loopback-only MySQL endpoint."
   ],
   "business_rules": [
     "Each account may have at most one active lab.",
@@ -107,7 +107,7 @@
     },
     {
       "id": "R6",
-      "description": "系统应仅允许管理员预创建的测试账号登录。",
+      "description": "系统应仅允许初始化脚本或受信任本机维护预创建的测试账号登录。",
       "input_fields": [
         "username",
         "password"
@@ -120,7 +120,7 @@
       "expected_actions": [
         "系统创建认证会话并返回用户身份。"
       ],
-      "notes": "Title: 预创建账号登录. Source: SRC-CLI-002. Type: functional. Confidence: high. Status: accepted. Constraints: MVP不得提供公开注册入口. Acceptance candidate: 给定有效测试账号，登录成功；页面和API均不存在公开注册能力。"
+      "notes": "Title: 预创建账号登录. Source: SRC-CLI-002, SRC-CLI-003. Type: functional. Confidence: high. Status: accepted. Constraints: MVP不得提供公开注册入口. Acceptance candidate: 给定有效测试账号，登录成功；页面和API均不存在公开注册能力。"
     },
     {
       "id": "R7",
@@ -832,20 +832,19 @@
     },
     {
       "id": "R50",
-      "description": "MVP应提供命令行或初始化脚本管理测试账号并列出或强制清理实验。",
+      "description": "MVP应通过初始化脚本提供预创建测试账号，并允许受信任维护人员从宿主机本地维护账号数据。",
       "input_fields": [
-        "adminCommand",
-        "userId",
-        "labId"
+        "localDatabaseConnection",
+        "userRecord"
       ],
       "data_ranges": [],
       "conditions": [
-        "管理员在服务器受信环境执行管理命令"
+        "维护人员从MySQL宿主机本地执行受信任维护"
       ],
       "expected_actions": [
-        "管理员可创建、禁用、重置账号，列出实验并清理指定实验。"
+        "维护人员可检查用户、调整账号状态并执行必要的数据修复；实验资源由生命周期和资源核对机制清理。"
       ],
-      "notes": "Title: 命令行管理能力. Source: SRC-CLI-002. Type: functional. Confidence: high. Status: accepted. Constraints: 不得开发或公开管理员Web后台. Acceptance candidate: 给定管理员命令，可完成账号初始化和遗留实验清理，公网不存在管理页面。"
+      "notes": "Title: 受信任本机维护. Source: SRC-CLI-002, SRC-CLI-003. Type: functional. Confidence: high. Status: accepted. Constraints: MySQL只绑定127.0.0.1:3306; 不实现管理员CLI、管理员Web后台或公网数据库管理入口; 实验清理由生命周期、失败补偿和资源核对机制完成. Acceptance candidate: 给定远程主机无法连接MySQL，宿主机本地可以连接，公网不存在管理页面或管理API。"
     }
   ]
 }

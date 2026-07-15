@@ -208,7 +208,8 @@ Compose 使用具名 bridge 网络实现基础隔离。
 | `orchestration-net` | `orchestrator`、`docker-socket-proxy` | 受限 Docker API |
 | `db-admin-net` | `orchestrator`、`shared-mysql` | 实验数据库生命周期管理 |
 
-只有 `edge-nginx` 发布宿主机端口。
+`edge-nginx` 是唯一公网入口。
+`shared-mysql` 额外发布 `127.0.0.1:3306`，只用于宿主机本地受信任维护。
 `expose` 不作为安全边界，网络成员关系和不发布端口才是连通性边界。
 
 `platform-api` 与 `orchestrator` 不共享 TCP 网络。
@@ -301,7 +302,7 @@ MySQL 入口先运行环境驱动的账号初始化脚本，再按文件名执�
 用户名具有唯一约束，种子写入必须幂等。
 
 测试账号初始化可以通过环境开关关闭。
-正式账号后续由受信任的命令行管理工具创建，不提供公开注册或管理员 Web 后台。
+账号可通过初始化脚本或宿主机本地 MySQL 管理工具维护，不提供公开注册、管理员 CLI 或管理员 Web 后台。
 
 ## 9. 数据库权限
 
@@ -419,7 +420,7 @@ LAB_DEFAULT_MEMORY_MB=128
 LAB_DEFAULT_PIDS_LIMIT=64
 
 # 是否在首次初始化时写入本地开发和验收用的预创建测试账号。
-# 正式部署应设置为 false，并通过受信任的命令行管理工具创建账号。
+# 不使用种子账号时，可通过宿主机本地 MySQL 管理入口维护账号。
 SEED_TEST_USERS=true
 ```
 
