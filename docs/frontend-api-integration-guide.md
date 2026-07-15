@@ -461,7 +461,9 @@ Set-Cookie: session=<opaque-token>; HttpOnly; SameSite=Strict; Path=/
 
 状态：`reserved`
 
-当前 OpenAPI 已保留该端点，但当前 Router 实际返回 `404`。
+当前 OpenAPI 已保留该端点。阶段三已经实现内部状态机、持久操作队列、租约 Worker 和
+UDS 客户端，但在安全编排与失败补偿完成前，Router 仍返回
+`501 LABS_NOT_IMPLEMENTED`，不会创建实验资源。
 
 请求 JSON：
 
