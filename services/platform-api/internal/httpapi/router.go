@@ -35,5 +35,6 @@ func NewRouter(
 	api := router.Group("/api/v1")
 	api.GET("/courses", handler.listCourses)
 	api.GET("/courses/:slug", handler.getCourse)
+	api.POST("/labs", handler.createLab)
 	return router
 }

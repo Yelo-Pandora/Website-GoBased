@@ -81,6 +81,15 @@ func (h *handler) getCourse(ctx *gin.Context) {
 	ctx.JSON(http.StatusOK, gin.H{"data": gin.H{"course": detail}})
 }
 
+func (h *handler) createLab(ctx *gin.Context) {
+	httpserver.WriteError(
+		ctx,
+		http.StatusNotImplemented,
+		"LABS_NOT_IMPLEMENTED",
+		"lab creation is not implemented",
+	)
+}
+
 func (h *handler) health(ctx *gin.Context) {
 	ctx.JSON(http.StatusOK, health.NewResponse("platform-api", "ok", nil))
 }

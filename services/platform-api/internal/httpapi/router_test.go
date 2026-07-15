@@ -2,6 +2,7 @@ package httpapi
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"log/slog"
@@ -108,5 +109,40 @@ func TestCourseRoutes(t *testing.T) {
 		if response.Code != test.wantStatus {
 			t.Errorf("GET %s status = %d; want %d", test.path, response.Code, test.wantStatus)
 		}
+	}
+}
+
+func TestCreateLabReturnsReservedResponse(t *testing.T) {
+	router := NewRouter(
+		slog.New(slog.NewTextHandler(io.Discard, nil)),
+		pingerStub{},
+		"http://lab-gateway:8080",
+		courseServiceStub{},
+	)
+	request := httptest.NewRequest(http.MethodPost, "/api/v1/labs", nil)
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, request)
+
+	if response.Code != http.StatusNotImplemented {
+		t.Fatalf(
+			"status = %d; want %d",
+			response.Code,
+			http.StatusNotImplemented,
+		)
+	}
+
+	var body struct {
+		Error struct {
+			Code string `json:"code"`
+		} `json:"error"`
+	}
+	if err := json.Unmarshal(response.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if body.Error.Code != "LABS_NOT_IMPLEMENTED" {
+		t.Errorf(
+			"error code = %q; want LABS_NOT_IMPLEMENTED",
+			body.Error.Code,
+		)
 	}
 }

@@ -78,6 +78,10 @@ paths:
       responses:
         "501":
           description: Reserved for the lab implementation phase.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
 components:
   responses:
     InternalError:
