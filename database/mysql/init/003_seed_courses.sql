@@ -1,3 +1,5 @@
+SET NAMES utf8mb4;
+
 USE platform;
 
 INSERT INTO courses (

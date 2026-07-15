@@ -9,6 +9,7 @@ readonly EXPECTED_DATABASE="platform"
 mysql_command() {
   MYSQL_PWD="${MYSQL_ROOT_PASSWORD}" mysql \
     --batch \
+    --default-character-set=utf8mb4 \
     --host="${MYSQL_HOST}" \
     --port="${MYSQL_PORT}" \
     --raw \
