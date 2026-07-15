@@ -6,6 +6,7 @@ FROM ${NODE_IMAGE} AS build
 WORKDIR /app
 COPY web/package.json web/package-lock.json ./
 RUN npm ci
+COPY contracts/http /contracts/http
 COPY web/index.html web/vite.config.js ./
 COPY web/src ./src
 RUN npm run build

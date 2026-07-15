@@ -1,7 +1,7 @@
 :root {
-  color: #18212b;
-  font-family: inter, ui-sans-serif, system-ui, -apple-system, blinkmacsystemfont,
-    "Segoe UI", sans-serif;
+  color: #17212b;
+  font-family: inter, ui-sans-serif, system-ui, -apple-system,
+    blinkmacsystemfont, "Segoe UI", sans-serif;
   font-synthesis: none;
   letter-spacing: 0;
   text-rendering: optimizelegibility;
@@ -12,195 +12,138 @@
 }
 
 body {
-  background: #f4f6f8;
+  background: #f3f5f6;
   margin: 0;
   min-width: 320px;
 }
 
-button,
-input,
-select,
-textarea {
-  font: inherit;
-}
-
-.app-shell {
+.api-console {
   min-height: 100vh;
 }
 
-.topbar {
+.api-console__header {
   align-items: center;
   background: #fff;
-  border-bottom: 1px solid #dce2e8;
-  display: flex;
-  gap: 12px;
-  min-height: 64px;
-  padding: 10px 24px;
-}
-
-.brand-mark {
-  align-items: center;
-  background: #17324d;
-  border-radius: 6px;
-  color: #fff;
-  display: flex;
-  font-size: 14px;
-  font-weight: 700;
-  height: 38px;
-  justify-content: center;
-  width: 38px;
-}
-
-.product-name,
-.environment-name {
-  margin: 0;
-}
-
-.product-name {
-  font-size: 15px;
-  font-weight: 650;
-}
-
-.environment-name {
-  color: #667482;
-  font-size: 12px;
-  margin-top: 2px;
-}
-
-.workspace {
-  margin: 0 auto;
-  max-width: 1120px;
-  padding: 48px 24px 64px;
-}
-
-.workspace-heading {
-  align-items: end;
+  border-bottom: 1px solid #d8dee3;
   display: flex;
   justify-content: space-between;
-  margin-bottom: 22px;
+  min-height: 72px;
+  padding: 12px 28px;
 }
 
-.eyebrow {
-  color: #53708b;
-  font-size: 12px;
-  font-weight: 700;
-  margin: 0 0 8px;
-  text-transform: uppercase;
-}
-
-h1,
-h2 {
-  letter-spacing: 0;
+.api-console__header h1,
+.api-console__product {
   margin: 0;
 }
 
-h1 {
-  font-size: 28px;
-  line-height: 1.25;
+.api-console__header h1 {
+  font-size: 20px;
+  line-height: 1.35;
 }
 
-h2 {
-  font-size: 15px;
-  line-height: 1.4;
-}
-
-.status-summary {
-  background: #e7edf2;
-  border: 1px solid #cbd5df;
-  border-radius: 999px;
+.api-console__header code {
   color: #415466;
-  font-size: 12px;
-  font-weight: 700;
-  padding: 6px 10px;
-}
-
-.status-summary[data-status="scaffold"] {
-  background: #e7f3ec;
-  border-color: #b7d9c5;
-  color: #21613b;
-}
-
-.service-grid {
-  display: grid;
-  gap: 12px;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-}
-
-.service-item {
-  background: #fff;
-  border: 1px solid #dce2e8;
-  border-radius: 6px;
-  min-height: 148px;
-  padding: 20px;
-}
-
-.service-item__header {
-  align-items: center;
-  display: flex;
-  justify-content: space-between;
-}
-
-.service-item p {
-  color: #627180;
-  font-size: 14px;
-  line-height: 1.55;
-  margin: 20px 0 14px;
-}
-
-.service-item code {
-  color: #294b69;
   font-size: 12px;
   overflow-wrap: anywhere;
 }
 
-.status-dot {
-  border-radius: 50%;
-  display: inline-block;
-  height: 9px;
-  width: 9px;
+.api-console__product {
+  color: #5c6975;
+  font-size: 12px;
+  margin-bottom: 4px;
 }
 
-.status-dot--healthy {
-  background: #24834f;
+.api-console__content {
+  padding: 0 0 48px;
 }
 
-.status-dot--waiting {
-  background: #c28a22;
+.swagger-ui {
+  color: #17212b;
+  font-family: inherit;
 }
 
-.status-dot--internal {
-  background: #3975a6;
+.swagger-ui .info {
+  margin: 28px 0;
 }
 
-.status-dot--idle {
-  background: #8996a3;
+.swagger-ui .info .title,
+.swagger-ui .info hgroup.main a,
+.swagger-ui .opblock-tag,
+.swagger-ui .opblock .opblock-summary-method,
+.swagger-ui .opblock .opblock-summary-path,
+.swagger-ui .opblock .opblock-summary-description,
+.swagger-ui .responses-inner h4,
+.swagger-ui .responses-inner h5,
+.swagger-ui .tab li,
+.swagger-ui button,
+.swagger-ui input,
+.swagger-ui select,
+.swagger-ui textarea {
+  font-family: inherit;
+  letter-spacing: 0;
 }
 
-.error-message {
-  background: #fff3f1;
-  border-left: 3px solid #bc4c3f;
-  color: #7d2f27;
-  font-size: 13px;
-  margin: 16px 0 0;
-  padding: 12px 14px;
+.swagger-ui .info .title {
+  font-size: 28px;
+}
+
+.swagger-ui .opblock {
+  border-radius: 4px;
+  box-shadow: none;
+}
+
+.swagger-ui .opblock .opblock-summary {
+  min-height: 54px;
+}
+
+.swagger-ui .opblock .opblock-summary-path {
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.swagger-ui .scheme-container {
+  background: #fff;
+  box-shadow: none;
+}
+
+.swagger-ui .topbar {
+  display: none;
+}
+
+.swagger-ui .wrapper {
+  max-width: 1280px;
+  padding: 0 28px;
 }
 
 @media (max-width: 720px) {
-  .topbar {
-    padding: 10px 16px;
-  }
-
-  .workspace {
-    padding: 32px 16px 48px;
-  }
-
-  .workspace-heading {
+  .api-console__header {
     align-items: flex-start;
     flex-direction: column;
-    gap: 14px;
+    gap: 8px;
+    padding: 12px 16px;
   }
 
-  .service-grid {
-    grid-template-columns: 1fr;
+  .swagger-ui .info {
+    margin: 20px 0;
+  }
+
+  .swagger-ui .info .title {
+    font-size: 22px;
+  }
+
+  .swagger-ui .opblock .opblock-summary {
+    align-items: flex-start;
+    flex-wrap: wrap;
+    gap: 8px;
+    padding: 10px;
+  }
+
+  .swagger-ui .opblock .opblock-summary-description {
+    flex-basis: 100%;
+    padding-left: 0;
+  }
+
+  .swagger-ui .wrapper {
+    padding: 0 12px;
   }
 }
