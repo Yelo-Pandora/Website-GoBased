@@ -56,6 +56,17 @@ func (s *queueStub) CompleteProvision(
 	return nil
 }
 
+func (s *queueStub) CompleteFailure(
+	_ context.Context,
+	_ Record,
+	errorCode string,
+	_ string,
+	_ time.Time,
+) error {
+	s.completedCode = errorCode
+	return nil
+}
+
 type executorStub struct {
 	command  protocol.Command
 	response protocol.CommandResponse
@@ -174,5 +185,37 @@ func TestWorkerNoPendingOperation(t *testing.T) {
 	processed, err := worker.processOne(context.Background())
 	if err != nil || processed {
 		t.Fatalf("processOne() = %t, %v", processed, err)
+	}
+}
+
+func TestWorkerRejectsUnsupportedActionWithoutProvisionTransition(t *testing.T) {
+	t.Parallel()
+
+	queue := &queueStub{record: Record{
+		OperationID: "operation-1",
+		LabID:       "lab-test",
+		RequestedBy: 7,
+		Action:      "UNKNOWN_ACTION",
+	}}
+	worker, err := newWorker(
+		slog.New(slog.NewTextHandler(io.Discard, nil)),
+		queue,
+		&executorStub{},
+		WorkerConfig{
+			Owner:          "worker-1",
+			PollInterval:   time.Second,
+			LeaseDuration:  time.Minute,
+			CommandTimeout: 10 * time.Second,
+		},
+	)
+	if err != nil {
+		t.Fatalf("newWorker() error = %v", err)
+	}
+	if _, err := worker.processOne(context.Background()); err != nil {
+		t.Fatalf("processOne() error = %v", err)
+	}
+	if queue.completedCode != "ACTION_NOT_SUPPORTED" ||
+		queue.completedResult != nil {
+		t.Fatalf("unsupported action completion = %#v", queue)
 	}
 }

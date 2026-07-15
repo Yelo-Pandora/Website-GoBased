@@ -6,6 +6,8 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -66,17 +68,49 @@ func TestRepositoryCreateIntegration(t *testing.T) {
 		MaxTemporaryContainers: 40,
 		MaxInstancesPerLab:     4,
 	})
+	var labSequence atomic.Int64
 	service.newID = func() (string, error) {
-		return fmt.Sprintf("lab-test-%d", stamp), nil
+		return fmt.Sprintf("lab-test-%d-%d", stamp, labSequence.Add(1)), nil
 	}
 	operationID := fmt.Sprintf("operation-%d", stamp)
-	created, err := service.Create(ctx, userID, courseID, operationID)
-	if err != nil {
-		t.Fatalf("Create() error = %v", err)
+	start := make(chan struct{})
+	results := make([]CreateResult, 2)
+	errorsByCall := make([]error, 2)
+	var waitGroup sync.WaitGroup
+	for i := range results {
+		waitGroup.Add(1)
+		go func(index int) {
+			defer waitGroup.Done()
+			<-start
+			results[index], errorsByCall[index] = service.Create(
+				ctx,
+				userID,
+				courseID,
+				operationID,
+			)
+		}(i)
+	}
+	close(start)
+	waitGroup.Wait()
+	for i, err := range errorsByCall {
+		if err != nil {
+			t.Fatalf("concurrent Create()[%d] error = %v", i, err)
+		}
+	}
+	created := results[0]
+	if results[1].Session.ID != created.Session.ID {
+		t.Fatalf("concurrent Create() sessions = %q, %q", created.Session.ID, results[1].Session.ID)
+	}
+	if results[0].Existing == results[1].Existing {
+		t.Fatalf("concurrent Create() existing flags = %t, %t", results[0].Existing, results[1].Existing)
 	}
 	if created.Existing || created.Session.Status != StatusPreparing ||
 		created.Operation.Status != "pending" {
-		t.Fatalf("Create() result = %#v", created)
+		created = results[1]
+	}
+	if created.Existing || created.Session.Status != StatusPreparing ||
+		created.Operation.Status != "pending" {
+		t.Fatalf("new Create() result = %#v", created)
 	}
 	repeated, err := service.Create(ctx, userID, courseID, operationID)
 	if err != nil {

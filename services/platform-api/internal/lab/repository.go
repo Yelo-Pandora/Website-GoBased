@@ -66,6 +66,19 @@ func (r *Repository) Create(
 	if err := lockGlobalAdmission(ctx, tx); err != nil {
 		return CreateResult{}, err
 	}
+	existing, err = findExistingCreate(ctx, tx, operationID)
+	if err == nil {
+		if existing.Operation.RequestedBy != userID ||
+			existing.Operation.Action != createLabAction ||
+			existing.Session.CourseID != courseID {
+			return CreateResult{}, ErrOperationConflict
+		}
+		existing.Existing = true
+		return existing, nil
+	}
+	if !errors.Is(err, sql.ErrNoRows) {
+		return CreateResult{}, err
+	}
 	var courseSlug string
 	var courseStatus string
 	if err := tx.QueryRowContext(

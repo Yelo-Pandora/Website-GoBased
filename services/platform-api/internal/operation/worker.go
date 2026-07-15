@@ -34,6 +34,13 @@ type queue interface {
 		errorMessage string,
 		now time.Time,
 	) error
+	CompleteFailure(
+		ctx context.Context,
+		record Record,
+		errorCode string,
+		errorMessage string,
+		now time.Time,
+	) error
 }
 
 type commandExecutor interface {
@@ -143,10 +150,9 @@ func (w *Worker) processOne(ctx context.Context) (bool, error) {
 		return true, err
 	}
 	if record.Action != ActionCreateLab {
-		return true, w.queue.CompleteProvision(
+		return true, w.queue.CompleteFailure(
 			ctx,
 			record,
-			nil,
 			"ACTION_NOT_SUPPORTED",
 			"operation action is not supported by this worker",
 			w.now().UTC().Truncate(time.Microsecond),

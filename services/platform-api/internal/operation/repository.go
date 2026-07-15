@@ -201,6 +201,38 @@ func (r *Repository) CompleteProvision(
 	return nil
 }
 
+// CompleteFailure fails an operation without applying an action-specific transition.
+func (r *Repository) CompleteFailure(
+	ctx context.Context,
+	record Record,
+	errorCode string,
+	errorMessage string,
+	now time.Time,
+) error {
+	result, err := r.database.ExecContext(ctx, `
+		UPDATE lab_operations
+		SET
+			status = 'failed',
+			error_code = ?,
+			error_message = ?,
+			lease_owner = NULL,
+			lease_expires_at = NULL,
+			completed_at = ?,
+			updated_at = ?
+		WHERE id = ? AND status = 'running' AND lease_owner = ?`,
+		errorCode,
+		errorMessage,
+		now,
+		now,
+		record.ID,
+		record.LeaseOwner,
+	)
+	if err != nil {
+		return fmt.Errorf("fail operation: %w", err)
+	}
+	return requireOneRow(result)
+}
+
 func requireOneRow(result sql.Result) error {
 	rowsAffected, err := result.RowsAffected()
 	if err != nil {
