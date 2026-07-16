@@ -13,9 +13,9 @@
 
 1. 先阅读第 3 节，确认端点当前属于哪个实现阶段。
 2. 使用第 5 至第 7 节的 JSON 建立 Course、Auth 和 Lab Mock。
-3. 对状态变更统一模拟 `202 Accepted` 和 Operation 对象。
+3. 对实验异步变更统一模拟 `202 Accepted` 和 Operation 对象。
 4. 使用第 7.6 节模拟 SSE，把 Operation 和 Lab Snapshot 更新到最新状态。
-5. 使用第 9 节的稳定错误码驱动页面错误分支。
+5. 使用第 9 节的精简错误码驱动页面错误分支。
 6. 在后端正式开发前评审第 13 节的开放问题。
 
 ## 1. 状态标记
@@ -23,13 +23,13 @@
 本文使用以下状态：
 
 - `available`：当前代码已经实现并通过 Compose 验收。
-- `reserved`：OpenAPI 已保留，但当前 Go Router 尚未注册实现。
+- `reserved`：OpenAPI 和 Go Router 已注册，但业务能力尚未实现。
 - `planned`：SDS 已定义 URL 和语义，但 OpenAPI 与代码尚未实现。
 - `needs-review`：前端对接需要，但 SDS 尚未固定具体契约。
 
-`reserved` 端点目前实际会返回 `404 Not Found`，而不是 OpenAPI 中描述的
+`reserved` 端点用于验证认证、CSRF 和占位错误响应，当前返回
 `501 Not Implemented`。
-前端在后端实现前应使用 Mock，不应依赖当前 `404` 行为。
+前端若提前开发完整实验流程，仍需对尚未实现的成功响应使用 Mock。
 
 ## 2. 基础调用约定
 
@@ -314,6 +314,7 @@ SDS 只要求唯一性，没有固定 UUID 格式。
 错误：
 
 - `404 COURSE_NOT_FOUND`
+- `500 INTERNAL_ERROR`
 
 ## 6. 认证端点
 
@@ -363,6 +364,9 @@ Set-Cookie: session=<opaque-token>; HttpOnly; SameSite=Strict; Path=/
 - `403 ACCOUNT_DISABLED`
 - `429 LOGIN_RATE_LIMITED`
 - `500 INTERNAL_ERROR`
+
+默认测试账号为启用状态。
+人工黑盒测试无需修改数据库专门覆盖禁用账号分支。
 
 默认限流策略为 5 分钟内最多 5 次失败，超过后阻止 10 分钟。
 登录成功后会清除该用户名和客户端地址对应的失败记录。
@@ -427,6 +431,10 @@ Set-Cookie: session=<opaque-token>; HttpOnly; SameSite=Strict; Path=/
   "requestId": "9d7d45bd25bf4b7e8d89998ad66578d6"
 }
 ```
+
+其他错误：
+
+- `500 INTERNAL_ERROR`
 
 ## 7. 实验端点
 
@@ -499,15 +507,15 @@ UDS 客户端，但在安全编排与失败补偿完成前，Router 仍返回
 }
 ```
 
-建议错误：
+当前阶段只需要验证 `401 AUTH_REQUIRED`、`403 CSRF_INVALID` 和
+`501 LABS_NOT_IMPLEMENTED`。
 
-- `401 AUTH_REQUIRED`
-- `403 CSRF_INVALID`
+正式开放实验创建时预设以下错误：
+
+- `400 VALIDATION_FAILED`
 - `404 COURSE_NOT_FOUND`
 - `409 LAB_ALREADY_ACTIVE`
-- `409 LAB_BUSY`
-- `503 RESOURCE_CAPACITY_EXCEEDED`
-- `503 DOCKER_UNAVAILABLE`
+- `503 LAB_UNAVAILABLE`
 
 ### 7.2 `GET /api/v1/labs/:id`
 
@@ -595,11 +603,14 @@ UDS 客户端，但在安全编排与失败补偿完成前，Router 仍返回
 - `latestOperation`
 - `lastEventId`
 
-建议错误：
+预设错误：
 
 - `401 AUTH_REQUIRED`
-- `403 LAB_NOT_OWNED`
 - `404 LAB_NOT_FOUND`
+- `503 LAB_UNAVAILABLE`
+
+实验不存在、已经结束或不属于当前用户时统一返回 `LAB_NOT_FOUND`。
+接口不额外暴露实验归属信息。
 
 ### 7.3 `POST /api/v1/labs/:id/actions`
 
@@ -644,21 +655,18 @@ SDS 明确要求以下字段：
 }
 ```
 
-建议错误：
+预设错误：
 
 - `400 VALIDATION_FAILED`
 - `401 AUTH_REQUIRED`
 - `403 CSRF_INVALID`
-- `403 LAB_NOT_OWNED`
 - `404 LAB_NOT_FOUND`
-- `404 INSTANCE_NOT_FOUND`
-- `409 LAB_BUSY`
-- `409 MIN_INSTANCE_LIMIT`
-- `409 MAX_INSTANCE_LIMIT`
 - `422 ACTION_NOT_ALLOWED`
-- `503 RESOURCE_CAPACITY_EXCEEDED`
-- `503 DOCKER_UNAVAILABLE`
-- `503 NGINX_CONFIG_INVALID`
+- `503 LAB_UNAVAILABLE`
+
+未知动作、无效参数、目标实例不存在以及实例数量达到上下限时统一返回
+`ACTION_NOT_ALLOWED`。
+同一实验的动作由持久队列串行执行，不预设 `LAB_BUSY`。
 
 #### 7.3.1 建议动作类型
 
@@ -828,20 +836,18 @@ SDS 明确要求以下字段：
 
 重置成功后应恢复场景初始拓扑、性能、权重、数据库和缓存状态。
 
-建议错误：
+预设错误：
 
 - `401 AUTH_REQUIRED`
 - `403 CSRF_INVALID`
-- `403 LAB_NOT_OWNED`
 - `404 LAB_NOT_FOUND`
-- `409 LAB_BUSY`
-- `503 DOCKER_UNAVAILABLE`
+- `503 LAB_UNAVAILABLE`
 
 ### 7.5 `DELETE /api/v1/labs/:id`
 
 状态：`planned`
 
-SRS 要求状态变更携带 `operationId`。
+SRS 要求实验生命周期变更携带 `operationId`。
 本文建议 DELETE 请求使用 JSON Body。
 
 请求 JSON：
@@ -870,6 +876,13 @@ SRS 要求状态变更携带 `operationId`。
 
 `operationId` 放在 DELETE Body、Header 或 Query 中尚未最终确认。
 不建议放入 URL Query，统一 JSON Body 更容易与其他状态变更保持一致。
+
+预设错误：
+
+- `401 AUTH_REQUIRED`
+- `403 CSRF_INVALID`
+- `404 LAB_NOT_FOUND`
+- `503 LAB_UNAVAILABLE`
 
 ### 7.6 `GET /api/v1/labs/:id/events`
 
@@ -946,6 +959,12 @@ SDS 明确规定每个事件包含：
 页面完全刷新后如何把快照中的 `lastEventId` 传回服务端仍需确认。
 可选方案是增加 `afterEventId` Query 参数。
 
+预设错误：
+
+- `401 AUTH_REQUIRED`
+- `404 LAB_NOT_FOUND`
+- `503 LAB_UNAVAILABLE`
+
 ## 8. 操作状态
 
 SDS 定义的操作状态为：
@@ -997,56 +1016,50 @@ GET /api/v1/operations/:operationId
 
 该候选端点状态为 `needs-review`，前端暂时应从实验快照和 SSE 获取状态。
 
-## 9. 统一错误响应草案
+## 9. 统一错误响应
 
-SRS 要求前端依赖稳定业务错误码，不能解析内部错误字符串。
-SDS 没有固定错误 JSON Envelope。
-
-建议错误响应：
+当前 Gin 入口统一返回以下错误结构：
 
 ```json
 {
   "error": {
-    "code": "LAB_ALREADY_ACTIVE",
-    "message": "The account already has an active lab.",
-    "details": {
-      "activeLabId": "lab_01J2M8Y5A4D7KQ2V9N6P3R1T0X"
-    },
-    "requestId": "req_01J2M9C8B7A6D5E4F3G2H1J0K"
-  }
+    "code": "AUTH_REQUIRED",
+    "message": "authentication is required"
+  },
+  "requestId": "9d7d45bd25bf4b7e8d89998ad66578d6"
 }
 ```
 
 `code` 是稳定机器字段。
-`message` 用于展示或日志，但前端业务分支不应依赖其文本。
-`details` 只包含可以安全暴露给当前用户的结构化信息。
-`requestId` 是建议字段，当前入口虽向上游传递请求 ID，但尚未回写响应。
+`message` 可用于展示或日志，但前端业务分支不应依赖其文本。
+`requestId` 位于响应顶层，用于关联服务端日志。
+当前响应不包含 `details`。
 
-建议 HTTP 状态映射：
+错误码需要预先形成稳定契约，但前端不需要为每个错误建立独立页面状态。
+MVP 使用以下精简集合：
 
-| HTTP | 错误码示例 | 含义 |
+| HTTP | 错误码 | 含义 |
 | --- | --- | --- |
-| 400 | `VALIDATION_FAILED` | JSON 或字段格式不合法 |
+| 400 | `VALIDATION_FAILED` | 请求体或字段不合法 |
 | 401 | `AUTH_REQUIRED` | 未登录或 Session 无效 |
 | 401 | `INVALID_CREDENTIALS` | 登录凭据错误 |
 | 403 | `ACCOUNT_DISABLED` | 登录账号已禁用 |
 | 403 | `CSRF_INVALID` | CSRF Token 缺失或错误 |
-| 403 | `LAB_NOT_OWNED` | 实验或实例不属于当前用户 |
 | 404 | `COURSE_NOT_FOUND` | 课程不存在 |
-| 404 | `LAB_NOT_FOUND` | 实验不存在 |
-| 404 | `INSTANCE_NOT_FOUND` | 实例不存在 |
-| 409 | `LAB_ALREADY_ACTIVE` | 当前账户已有活动实验 |
-| 409 | `LAB_BUSY` | 同一实验存在串行拓扑操作 |
-| 409 | `MIN_INSTANCE_LIMIT` | 删除后会低于最少实例数 |
-| 409 | `MAX_INSTANCE_LIMIT` | 增加后会超过最多实例数 |
-| 422 | `ACTION_NOT_ALLOWED` | 动作不在场景白名单中 |
+| 404 | `LAB_NOT_FOUND` | 实验不存在、已结束或不可由当前用户访问 |
+| 409 | `LAB_ALREADY_ACTIVE` | 当前账号已有活动实验 |
+| 422 | `ACTION_NOT_ALLOWED` | 动作或参数不符合当前场景规则 |
 | 429 | `LOGIN_RATE_LIMITED` | 登录尝试频率过高 |
-| 503 | `RESOURCE_CAPACITY_EXCEEDED` | 宿主机或平台配额不足 |
-| 503 | `DOCKER_UNAVAILABLE` | Docker 控制面不可用 |
-| 503 | `NGINX_CONFIG_INVALID` | 新 upstream 配置校验失败 |
+| 500 | `INTERNAL_ERROR` | 未预期的平台内部错误 |
+| 501 | `LABS_NOT_IMPLEMENTED` | 提示实验功能尚未开放 |
+| 503 | `LAB_UNAVAILABLE` | 实验容量或运行基础设施暂时不可用 |
 
-认证、课程和当前实验占位端点的状态映射已经写入 OpenAPI。
-后续实验错误码仍将在对应阶段继续补充。
+`LAB_NOT_OWNED`、`INSTANCE_NOT_FOUND`、`MIN_INSTANCE_LIMIT`、
+`MAX_INSTANCE_LIMIT`、`LAB_BUSY`、`RESOURCE_CAPACITY_EXCEEDED`、
+`DOCKER_UNAVAILABLE` 和 `NGINX_CONFIG_INVALID` 不作为 MVP 对外错误码。
+
+前端只需对登录、重新认证、已有活动实验和动作不允许等可恢复场景提供定向操作。
+其他错误统一显示通用提示，并保留 `requestId` 便于排查。
 
 ## 10. 前端 Mock 建议
 
@@ -1054,9 +1067,10 @@ SDS 没有固定错误 JSON Envelope。
 
 - 仅对仍标记为 `planned` 的实验端点使用 Mock。
 - 把所有枚举集中定义，不在组件中散落字符串。
-- 所有状态变更先返回 `202` 和 `pending` Operation。
+- 所有实验异步变更先返回 `202` 和 `pending` Operation。
 - 通过模拟 SSE 把 Operation 更新为 `running` 和 `succeeded`。
-- 模拟 `AUTH_REQUIRED`、`LAB_BUSY` 和资源不足等稳定错误码。
+- 模拟 `LAB_ALREADY_ACTIVE`、`LAB_NOT_FOUND`、`ACTION_NOT_ALLOWED` 和
+  `LAB_UNAVAILABLE`。
 - 页面刷新时先加载 `auth/me`，再加载活动实验快照。
 - SSE 只更新局部状态，完整快照仍作为最终恢复依据。
 

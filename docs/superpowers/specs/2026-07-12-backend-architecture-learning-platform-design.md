@@ -245,7 +245,7 @@ Lifecycle Scheduler 负责：
 外部 API 保持以下资源边界：
 
 * `GET /api/v1/courses`
-* `GET /api/v1/courses/:id`
+* `GET /api/v1/courses/:slug`
 * `POST /api/v1/auth/login`
 * `POST /api/v1/auth/logout`
 * `GET /api/v1/auth/me`
@@ -256,8 +256,27 @@ Lifecycle Scheduler 负责：
 * `DELETE /api/v1/labs/:id`
 * `GET /api/v1/labs/:id/events`
 
-实验动作请求必须包含唯一 `operationId`、动作类型、可选目标实例和受限参数对象。
+部署和诊断端点单独提供：
+
+* `GET /healthz`
+* `GET /readyz`
+* `GET /api/v1/system/info`
+
+`/healthz` 用于容器和入口存活检查，不写入 Swagger UI 的业务接口清单。
+实验创建、拓扑调整和生命周期变更请求必须包含唯一 `operationId`。
+具体实验动作还应包含动作类型、可选目标实例和受限参数对象。
 耗时动作返回 `202 Accepted`，完成状态通过查询接口和 SSE 获取。
+
+MVP 对外错误契约保持精简：
+
+* 实验不存在、已经结束或不属于当前用户时返回 `LAB_NOT_FOUND`。
+* 未知动作、目标实例无效或实例数量达到上下限时返回 `ACTION_NOT_ALLOWED`。
+* 容量不足以及 Docker、Nginx、Redis 等运行基础设施故障统一返回
+  `LAB_UNAVAILABLE`。
+* 相同 `operationId` 返回原结果，不同操作进入持久队列串行执行，不返回
+  `LAB_BUSY`。
+
+内部日志和操作记录可以保留具体故障原因，但不得把基础设施分类扩展为前端业务错误码。
 
 SSE 事件统一包含：
 
