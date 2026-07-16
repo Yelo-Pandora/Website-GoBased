@@ -13,6 +13,8 @@ bin/
 dist/
 web/dist/
 web/node_modules/
+web/test-results/
+web/playwright-report/
 
 # Test binary, built with `go test -c`
 *.test
