@@ -86,6 +86,20 @@ func (s *queueStub) CompleteDestroy(
 	return nil
 }
 
+func (s *queueStub) CompleteTopology(
+	_ context.Context,
+	record Record,
+	resultValue TopologyResult,
+	errorCode string,
+	_ string,
+	_ time.Time,
+) error {
+	s.completedCode = errorCode
+	s.completedResult = resultValue
+	s.completedAction = record.Action
+	return nil
+}
+
 func (s *queueStub) CompleteFailure(
 	_ context.Context,
 	_ Record,
@@ -101,6 +115,21 @@ type executorStub struct {
 	command  protocol.Command
 	response protocol.CommandResponse
 	err      error
+}
+
+type sequenceExecutor struct {
+	commands  []protocol.Command
+	responses []protocol.CommandResponse
+}
+
+func (s *sequenceExecutor) Execute(
+	_ context.Context,
+	command protocol.Command,
+) (protocol.CommandResponse, error) {
+	s.commands = append(s.commands, command)
+	response := s.responses[0]
+	s.responses = s.responses[1:]
+	return response, nil
 }
 
 func (s *executorStub) Execute(
@@ -168,6 +197,58 @@ func TestWorkerProcessesCreateLab(t *testing.T) {
 	if executor.command.CommandType != "PROVISION_LAB" ||
 		executor.command.RequestedBy != "7" {
 		t.Fatalf("command = %#v", executor.command)
+	}
+}
+
+func TestWorkerAddsInstanceAndAppliesUpstream(t *testing.T) {
+	queue := &queueStub{record: Record{
+		ID: 4, OperationID: "operation-add", LabID: "lab-test", RequestedBy: 7,
+		Action: ActionAddInstance,
+		Payload: json.RawMessage(`{
+			"scenarioTemplateId":"application_cluster_scenario_v1",
+			"instanceName":"app-2",
+			"performancePercent":100,
+			"servers":[
+				{"instanceName":"app-1","weight":100},
+				{"instanceName":"app-2","weight":100}
+			]
+		}`),
+	}}
+	executor := &sequenceExecutor{responses: []protocol.CommandResponse{
+		{Status: "succeeded", Result: map[string]any{
+			"instanceName": "app-2", "containerId": "container-2",
+			"containerName": "lab-test-app-2", "status": "running",
+			"cpuLimitCores": 0.1, "memoryLimitMb": 128,
+			"performancePercent": 100, "effectiveCapacity": 100,
+			"currentWeight": 100,
+		}},
+		{Status: "succeeded", Result: map[string]any{"applied": true}},
+	}}
+	worker, err := newWorker(
+		slog.New(slog.NewTextHandler(io.Discard, nil)),
+		queue,
+		executor,
+		WorkerConfig{
+			Owner: "worker-1", PollInterval: time.Second,
+			LeaseDuration: time.Minute, CommandTimeout: 10 * time.Second,
+		},
+	)
+	if err != nil {
+		t.Fatalf("newWorker() error = %v", err)
+	}
+	worker.newCommandID = func() (string, error) { return "command-test", nil }
+	processed, err := worker.processOne(context.Background())
+	if err != nil || !processed {
+		t.Fatalf("processOne() = %t, %v", processed, err)
+	}
+	if len(executor.commands) != 2 ||
+		executor.commands[0].CommandType != "CREATE_APP_INSTANCE" ||
+		executor.commands[1].CommandType != "APPLY_LAB_UPSTREAM" {
+		t.Fatalf("commands = %#v", executor.commands)
+	}
+	result, ok := queue.completedResult.(TopologyResult)
+	if !ok || result.Instance == nil || result.Instance.InstanceName != "app-2" {
+		t.Fatalf("completed result = %#v", queue.completedResult)
 	}
 }
 

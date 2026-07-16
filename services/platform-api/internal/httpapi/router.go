@@ -8,12 +8,22 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"website-gobased/internal/httpserver"
+	"website-gobased/internal/protocol"
 	"website-gobased/services/platform-api/internal/course"
 	"website-gobased/services/platform-api/internal/lab"
 )
 
 type databasePinger interface {
 	PingContext(ctx context.Context) error
+}
+
+type trafficService interface {
+	Submit(
+		ctx context.Context,
+		userID uint64,
+		labID string,
+		request protocol.TrafficBatchRequest,
+	) (protocol.TrafficBatchResult, error)
 }
 
 type courseService interface {
@@ -41,6 +51,12 @@ type labService interface {
 		labID string,
 		operationID string,
 	) (lab.ActionResult, error)
+	Action(
+		ctx context.Context,
+		userID uint64,
+		labID string,
+		input lab.ActionInput,
+	) (lab.ActionResult, error)
 }
 
 // NewRouter builds the platform API routes.
@@ -52,7 +68,12 @@ func NewRouter(
 	labs labService,
 	authentication authenticationService,
 	authConfig AuthConfig,
+	trafficServices ...trafficService,
 ) *gin.Engine {
+	var traffic trafficService
+	if len(trafficServices) > 0 {
+		traffic = trafficServices[0]
+	}
 	handler := newHandler(
 		logger,
 		database,
@@ -61,6 +82,7 @@ func NewRouter(
 		labs,
 		authentication,
 		authConfig,
+		traffic,
 	)
 	router := httpserver.NewRouter(logger)
 	router.GET("/healthz", handler.health)
@@ -95,6 +117,20 @@ func NewRouter(
 		handler.optionalAuthentication,
 		handler.requireAuthentication,
 		handler.getLab,
+	)
+	api.POST(
+		"/labs/:id/actions",
+		handler.optionalAuthentication,
+		handler.requireAuthentication,
+		handler.requireCSRF,
+		handler.submitLabAction,
+	)
+	api.POST(
+		"/labs/:id/traffic-batches",
+		handler.optionalAuthentication,
+		handler.requireAuthentication,
+		handler.requireCSRF,
+		handler.submitTrafficBatch,
 	)
 	api.POST(
 		"/labs/:id/reset",

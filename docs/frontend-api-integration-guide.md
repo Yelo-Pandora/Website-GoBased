@@ -130,10 +130,10 @@ SDS 只要求唯一性，没有固定 UUID 格式。
 | `available` | GET | `/api/v1/auth/me` | 获取当前登录用户 |
 | `available` | POST | `/api/v1/labs` | 创建实验 |
 | `available` | GET | `/api/v1/labs/:id` | 获取完整实验快照 |
-| `planned` | POST | `/api/v1/labs/:id/actions` | 提交白名单实验动作 |
+| `implemented` | POST | `/api/v1/labs/:id/actions` | 提交白名单实验动作 |
 | `available` | POST | `/api/v1/labs/:id/reset` | 重置实验 |
 | `available` | DELETE | `/api/v1/labs/:id` | 主动结束实验 |
-| `planned` | POST | `/api/v1/labs/:id/traffic-batches` | 提交一个前端生成的请求批次 |
+| `implemented` | POST | `/api/v1/labs/:id/traffic-batches` | 提交一个前端生成的请求批次 |
 
 ## 4. 当前可用端点
 
@@ -576,7 +576,7 @@ Set-Cookie: session=<opaque-token>; HttpOnly; SameSite=Strict; Path=/
 - `idleExpiresAt`
 - `maximumExpiresAt`
 
-以下运行时计算字段仍待阶段七的容量批次接入：
+以下运行时计算字段已由阶段七容量批次接入：
 
 - `capacity.totalEffectiveCapacity`
 - `trafficPolicy`
@@ -591,7 +591,7 @@ Set-Cookie: session=<opaque-token>; HttpOnly; SameSite=Strict; Path=/
 
 ### 7.3 `POST /api/v1/labs/:id/actions`
 
-状态：`planned`
+状态：`implemented`
 
 所有用户动作使用统一请求结构：
 
@@ -763,7 +763,7 @@ SDS 明确要求以下字段：
 
 ### 7.4 `POST /api/v1/labs/:id/traffic-batches`
 
-状态：`planned`
+状态：`implemented`
 
 该端点接收当前页面生成的一批教学等效请求。它是同步数据面接口，不创建
 `lab_operations`，也不使用 `operationId`。当前页面必须保证同一时间只有一个未完成请求。

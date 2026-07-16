@@ -3,6 +3,7 @@ package app
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -10,17 +11,46 @@ import (
 	"time"
 
 	"website-gobased/services/lab-app/internal/httpapi"
+	"website-gobased/services/lab-app/internal/order"
+	"website-gobased/services/lab-app/internal/product"
 )
 
 // Run 启动实验室应用程序的 HTTP 服务器，参数包括上下文、配置和日志记录器。它会监听指定的地址，并在接收到终止信号时优雅地关闭服务器。
 func Run(ctx context.Context, cfg Config, logger *slog.Logger) error {
+	database, err := sql.Open("mysql", cfg.DatabaseDSN)
+	if err != nil {
+		return fmt.Errorf("open lab database: %w", err)
+	}
+	defer database.Close()
+	database.SetConnMaxLifetime(3 * time.Minute)
+	database.SetMaxIdleConns(2)
+	database.SetMaxOpenConns(4)
+	pingCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	err = database.PingContext(pingCtx)
+	cancel()
+	if err != nil {
+		return fmt.Errorf("connect lab database: %w", err)
+	}
+	processor, err := order.NewProcessor(
+		product.NewRepository(database),
+		order.NewRepository(database),
+		order.Config{
+			LabID:             cfg.LabID,
+			InstanceID:        cfg.InstanceID,
+			EffectiveCapacity: cfg.EffectiveCapacity,
+			CapacityWindow:    cfg.CapacityWindow,
+		},
+	)
+	if err != nil {
+		return fmt.Errorf("configure order processor: %w", err)
+	}
 	server := &http.Server{
 		Addr: cfg.Addr,
 		Handler: httpapi.NewRouter(logger, httpapi.RuntimeIdentity{
 			LabID:        cfg.LabID,
 			InstanceID:   cfg.InstanceID,
 			ScenarioType: cfg.ScenarioType,
-		}),
+		}, processor),
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       10 * time.Second,
 		WriteTimeout:      15 * time.Second,

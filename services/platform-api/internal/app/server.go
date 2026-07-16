@@ -18,6 +18,7 @@ import (
 	"website-gobased/services/platform-api/internal/lifecycle"
 	"website-gobased/services/platform-api/internal/operation"
 	"website-gobased/services/platform-api/internal/orchestrator"
+	"website-gobased/services/platform-api/internal/traffic"
 )
 
 // Run starts the platform API and blocks until shutdown.
@@ -91,6 +92,20 @@ func Run(ctx context.Context, cfg Config, logger *slog.Logger) error {
 		IdleTimeout: cfg.LabIdleTimeout,
 		MaxDuration: cfg.LabMaxDuration,
 	})
+	trafficClient, err := traffic.NewClient(cfg.LabGatewayAddr, cfg.TrafficRequestTimeout)
+	if err != nil {
+		return fmt.Errorf("configure traffic client: %w", err)
+	}
+	defer trafficClient.CloseIdleConnections()
+	trafficService := traffic.NewService(
+		labs,
+		trafficClient,
+		traffic.NewLimiter(
+			cfg.TrafficRatePerSecond,
+			cfg.TrafficBurst,
+			cfg.TrafficLimiterEntries,
+		),
+	)
 
 	server := &http.Server{
 		Addr: cfg.Addr,
@@ -108,6 +123,7 @@ func Run(ctx context.Context, cfg Config, logger *slog.Logger) error {
 				CookieName:   cfg.AuthCookieName,
 				CookieSecure: cfg.AuthCookieSecure,
 			},
+			trafficService,
 		),
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       10 * time.Second,

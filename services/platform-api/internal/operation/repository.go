@@ -376,6 +376,163 @@ func (r *Repository) CompleteDestroy(
 	return nil
 }
 
+// CompleteTopology atomically completes a stage-seven topology action.
+func (r *Repository) CompleteTopology(
+	ctx context.Context,
+	record Record,
+	resultValue TopologyResult,
+	errorCode string,
+	errorMessage string,
+	now time.Time,
+) error {
+	tx, err := r.database.BeginTx(ctx, &sql.TxOptions{Isolation: sql.LevelReadCommitted})
+	if err != nil {
+		return fmt.Errorf("begin complete topology transaction: %w", err)
+	}
+	defer tx.Rollback()
+	status := StatusFailed
+	var resultJSON []byte
+	if errorCode == "" {
+		if err := applyTopologyResult(ctx, tx, record, resultValue, now); err != nil {
+			return err
+		}
+		status = StatusSucceeded
+		resultJSON, err = json.Marshal(resultValue)
+		if err != nil {
+			return fmt.Errorf("encode topology result: %w", err)
+		}
+	}
+	if err := completeOperationRecord(
+		ctx, tx, record, status, resultJSON, errorCode, errorMessage, now,
+	); err != nil {
+		return err
+	}
+	if errorCode == "" {
+		result, err := tx.ExecContext(ctx, `
+			UPDATE lab_sessions
+			SET status = ?, last_effective_action_at = ?, updated_at = ?
+			WHERE id = ? AND status IN (?, ?)`,
+			lab.StatusRunning,
+			now,
+			now,
+			record.LabID,
+			lab.StatusRunning,
+			lab.StatusExpiring,
+		)
+		if err != nil {
+			return fmt.Errorf("update topology lab activity: %w", err)
+		}
+		if err := requireOneRow(result); err != nil {
+			return lab.ErrStateConflict
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit topology action: %w", err)
+	}
+	return nil
+}
+
+func applyTopologyResult(
+	ctx context.Context,
+	tx *sql.Tx,
+	record Record,
+	result TopologyResult,
+	now time.Time,
+) error {
+	switch record.Action {
+	case ActionAddInstance:
+		if result.Instance == nil || result.Instance.InstanceName == "" ||
+			result.Instance.ContainerID == "" || result.Instance.MemoryLimitMB <= 0 ||
+			result.Instance.PerformancePercent <= 0 || result.Instance.EffectiveCapacity <= 0 ||
+			result.Instance.CurrentWeight <= 0 {
+			return errors.New("add instance result is incomplete")
+		}
+		_, err := tx.ExecContext(ctx, `
+			INSERT INTO lab_instances (
+				lab_id, instance_name, container_id, status, cpu_limit_cores,
+				memory_limit_mb, performance_percent, effective_capacity,
+				current_weight, created_at, updated_at
+			) VALUES (?, ?, ?, 'running', ?, ?, ?, ?, ?, ?, ?)`,
+			record.LabID,
+			result.Instance.InstanceName,
+			result.Instance.ContainerID,
+			result.Instance.CPULimitCores,
+			result.Instance.MemoryLimitMB,
+			result.Instance.PerformancePercent,
+			result.Instance.EffectiveCapacity,
+			result.Instance.CurrentWeight,
+			now,
+			now,
+		)
+		if err != nil {
+			return fmt.Errorf("persist added instance: %w", err)
+		}
+	case ActionRemoveInstance:
+		if result.RemovedInstanceID == "" {
+			return errors.New("remove instance result is incomplete")
+		}
+		deletedResult, err := tx.ExecContext(ctx,
+			"DELETE FROM lab_instances WHERE lab_id = ? AND instance_name = ?",
+			record.LabID,
+			result.RemovedInstanceID,
+		)
+		if err != nil {
+			return fmt.Errorf("delete removed instance: %w", err)
+		}
+		if err := requireOneRow(deletedResult); err != nil {
+			return lab.ErrStateConflict
+		}
+	case ActionSetInstancePerformance:
+		if result.Instance == nil || result.Instance.InstanceName == "" ||
+			result.Instance.ContainerID == "" || result.Instance.PerformancePercent <= 0 ||
+			result.Instance.EffectiveCapacity <= 0 {
+			return errors.New("performance result is incomplete")
+		}
+		updated, err := tx.ExecContext(ctx, `
+			UPDATE lab_instances
+			SET container_id = ?, status = 'running', cpu_limit_cores = ?,
+				performance_percent = ?, effective_capacity = ?, updated_at = ?
+			WHERE lab_id = ? AND instance_name = ?`,
+			result.Instance.ContainerID,
+			result.Instance.CPULimitCores,
+			result.Instance.PerformancePercent,
+			result.Instance.EffectiveCapacity,
+			now,
+			record.LabID,
+			result.Instance.InstanceName,
+		)
+		if err != nil {
+			return fmt.Errorf("persist instance performance: %w", err)
+		}
+		if err := requireOneRow(updated); err != nil {
+			return lab.ErrStateConflict
+		}
+	case ActionSetInstanceWeights:
+		if len(result.Weights) == 0 {
+			return errors.New("weight result is incomplete")
+		}
+		for _, weight := range result.Weights {
+			updated, err := tx.ExecContext(ctx, `
+				UPDATE lab_instances SET current_weight = ?, updated_at = ?
+				WHERE lab_id = ? AND instance_name = ?`,
+				weight.Weight,
+				now,
+				record.LabID,
+				weight.InstanceID,
+			)
+			if err != nil {
+				return fmt.Errorf("persist instance weight: %w", err)
+			}
+			if err := requireOneRow(updated); err != nil {
+				return lab.ErrStateConflict
+			}
+		}
+	default:
+		return errors.New("unsupported topology result")
+	}
+	return nil
+}
+
 func completeOperationRecord(
 	ctx context.Context,
 	tx *sql.Tx,

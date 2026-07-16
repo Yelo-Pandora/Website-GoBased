@@ -7,6 +7,10 @@ const actionNames = {
   CREATE_LAB: '创建实验',
   RESET_LAB: '重置实验',
   DESTROY_LAB: '结束实验',
+  ADD_INSTANCE: '增加实例',
+  REMOVE_INSTANCE: '删除实例',
+  SET_INSTANCE_PERFORMANCE: '调整实例性能',
+  SET_INSTANCE_WEIGHTS: '调整固定权重',
 };
 
 function isBusy(status) {

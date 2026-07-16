@@ -49,6 +49,8 @@ var allowedCommands = map[string]struct{}{
 	commandReconcileResources: {},
 }
 
+var errInvalidUpstream = errors.New("upstream server is invalid")
+
 type dockerOperator interface {
 	InspectImage(ctx context.Context, image string) error
 	EnsureNetwork(ctx context.Context, spec dockerapi.NetworkSpec) (dockerapi.EnsureResult, error)
@@ -407,9 +409,15 @@ func (s *Service) createAppCommand(
 		return nil, fail("DOCKER_UNAVAILABLE", "application instance could not be created", err)
 	}
 	return map[string]any{
-		"instanceName":  payload.InstanceName,
-		"containerId":   container.ID,
-		"containerName": container.Name,
+		"instanceName":       payload.InstanceName,
+		"containerId":        container.ID,
+		"containerName":      container.Name,
+		"status":             "running",
+		"cpuLimitCores":      scenario.Resources.BaseCPULimitCores * float64(performance) / 100,
+		"memoryLimitMb":      scenario.Resources.MemoryLimitMB,
+		"performancePercent": performance,
+		"effectiveCapacity":  scenario.Capacity.BaseCapacity * performance / 100,
+		"currentWeight":      scenario.LoadBalancing.InitialWeight,
 	}, nil
 }
 
@@ -440,22 +448,54 @@ func (s *Service) updateAppCapacity(
 		return nil, reject("INVALID_COMMAND", "invalid capacity payload", err)
 	}
 	scenario, ok := s.registry.Scenario(payload.ScenarioTemplateID)
-	if !ok || !validPerformance(scenario, payload.PerformancePercent) {
+	if !ok || !validPerformance(scenario, payload.PerformancePercent) ||
+		!validPerformance(scenario, payload.PreviousPerformancePercent) {
 		return nil, reject("INVALID_COMMAND", "capacity settings are invalid", nil)
 	}
 	resource, err := s.findInstance(ctx, command.LabID, payload.InstanceName)
 	if err != nil {
 		return nil, fail("INSTANCE_NOT_FOUND", "application instance was not found", err)
 	}
-	cpuCores := scenario.Resources.BaseCPULimitCores * float64(payload.PerformancePercent) / 100
-	if err := s.docker.UpdateContainerCPU(ctx, resource.ID, nanoCPUs(cpuCores)); err != nil {
-		return nil, fail("DOCKER_UNAVAILABLE", "application CPU limit could not be updated", err)
+	names, err := s.names(command.LabID, scenario)
+	if err != nil {
+		return nil, reject("INVALID_COMMAND", "lab identity is invalid", err)
 	}
+	templateValue, ok := s.registry.Container(scenario.ResourceTemplates.Application)
+	if !ok {
+		return nil, reject("TEMPLATE_NOT_FOUND", "application template is not available", nil)
+	}
+	image, err := s.imageFor(templateValue.ImageEnv)
+	if err != nil {
+		return nil, reject("TEMPLATE_NOT_FOUND", "application image is not configured", err)
+	}
+	if err := s.docker.RemoveContainer(ctx, resource.ID); err != nil {
+		return nil, fail("DOCKER_UNAVAILABLE", "application instance could not be replaced", err)
+	}
+	container, err := s.ensureApp(
+		ctx, command, scenario, templateValue, image, names,
+		payload.InstanceName, payload.PerformancePercent,
+	)
+	if err != nil {
+		_, rollbackErr := s.ensureApp(
+			context.WithoutCancel(ctx), command, scenario, templateValue, image, names,
+			payload.InstanceName, payload.PreviousPerformancePercent,
+		)
+		if rollbackErr != nil {
+			err = errors.Join(err, rollbackErr)
+		}
+		return nil, fail("DOCKER_UNAVAILABLE", "application instance could not be replaced", err)
+	}
+	cpuCores := scenario.Resources.BaseCPULimitCores * float64(payload.PerformancePercent) / 100
 	return map[string]any{
 		"instanceName":       payload.InstanceName,
+		"containerId":        container.ID,
+		"containerName":      container.Name,
+		"status":             "running",
 		"performancePercent": payload.PerformancePercent,
 		"cpuLimitCores":      cpuCores,
+		"memoryLimitMb":      scenario.Resources.MemoryLimitMB,
 		"effectiveCapacity":  scenario.Capacity.BaseCapacity * payload.PerformancePercent / 100,
+		"currentWeight":      scenario.LoadBalancing.InitialWeight,
 	}, nil
 }
 
@@ -515,7 +555,15 @@ func (s *Service) applyUpstream(ctx context.Context, command protocol.Command) (
 	if err := decodePayload(command.Payload, &payload, true); err != nil {
 		return nil, reject("INVALID_COMMAND", "invalid upstream payload", err)
 	}
-	if err := s.nginx.Apply(ctx, command.LabID, payload.nginxServers()); err != nil {
+	names, err := s.basicNames(command.LabID)
+	if err != nil {
+		return nil, reject("INVALID_COMMAND", "lab identity is invalid", err)
+	}
+	servers, err := payload.nginxServers(names)
+	if err != nil {
+		return nil, reject("INVALID_COMMAND", "invalid upstream payload", err)
+	}
+	if err := s.nginx.Apply(ctx, command.LabID, servers); err != nil {
 		return nil, fail("NGINX_CONFIG_INVALID", "lab gateway configuration could not be applied", err)
 	}
 	return map[string]any{"applied": true}, nil
@@ -580,6 +628,10 @@ func (s *Service) reconcile(ctx context.Context, command protocol.Command) (any,
 		expectedIDs = append(expectedIDs, labID)
 	}
 	sort.Strings(expectedIDs)
+	reconnectedNetworks, err := s.reconnectExpectedNetworks(ctx, expected)
+	if err != nil {
+		return nil, fail("RECONCILIATION_FAILED", "managed lab networks could not be restored", err)
+	}
 	actual, err := s.actualLabIDs(ctx)
 	if err != nil {
 		return nil, fail("RECONCILIATION_FAILED", "managed resources could not be inspected", err)
@@ -644,14 +696,38 @@ func (s *Service) reconcile(ctx context.Context, command protocol.Command) (any,
 		}
 	}
 	return map[string]any{
-		"expectedLabIds":   expectedIDs,
-		"orphanLabIds":     orphans,
-		"cleanedLabIds":    cleaned,
-		"orphanDatabases":  databaseNames(databaseOrphans),
-		"missingDatabases": missingDatabases,
-		"cleanedDatabases": cleanedDatabases,
-		"cleanupRequested": payload.Cleanup,
+		"expectedLabIds":      expectedIDs,
+		"orphanLabIds":        orphans,
+		"cleanedLabIds":       cleaned,
+		"orphanDatabases":     databaseNames(databaseOrphans),
+		"missingDatabases":    missingDatabases,
+		"cleanedDatabases":    cleanedDatabases,
+		"cleanupRequested":    payload.Cleanup,
+		"reconnectedNetworks": reconnectedNetworks,
 	}, nil
+}
+
+func (s *Service) reconnectExpectedNetworks(
+	ctx context.Context,
+	expected map[string]bool,
+) ([]string, error) {
+	networks, err := s.docker.ListManagedNetworks(ctx, "")
+	if err != nil {
+		return nil, err
+	}
+	reconnected := make([]string, 0)
+	for _, network := range networks {
+		labID := network.Labels["platform.labId"]
+		if !expected[labID] {
+			continue
+		}
+		if err := s.connectFixedServices(ctx, network.ID); err != nil {
+			return nil, fmt.Errorf("reconnect fixed services for %s: %w", labID, err)
+		}
+		reconnected = append(reconnected, labID)
+	}
+	sort.Strings(reconnected)
+	return reconnected, nil
 }
 
 func databaseNames(values []labdb.ManagedDatabase) []string {
@@ -692,6 +768,7 @@ func (s *Service) ensureApp(
 			"MYSQL_PASSWORD":      password,
 			"PERFORMANCE_PERCENT": strconv.Itoa(performance),
 			"EFFECTIVE_CAPACITY":  strconv.Itoa(scenario.Capacity.BaseCapacity * performance / 100),
+			"CAPACITY_WINDOW_MS":  strconv.Itoa(scenario.Capacity.CapacityWindowMS),
 			"TZ":                  "UTC",
 		},
 		Labels: labels, NetworkName: names.network,

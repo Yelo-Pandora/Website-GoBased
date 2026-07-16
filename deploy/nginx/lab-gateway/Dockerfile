@@ -7,7 +7,9 @@ COPY deploy/nginx/lab-gateway/static /etc/nginx/static
 COPY deploy/nginx/lab-gateway/templates /opt/platform/nginx-templates
 
 RUN mkdir -p /etc/nginx/labs \
-    && chown -R nginx:nginx /etc/nginx /opt/platform /var/cache/nginx
+    && chown -R nginx:nginx /etc/nginx /opt/platform /var/cache/nginx \
+    && chown 10001:10001 /etc/nginx/labs \
+    && chmod 0755 /etc/nginx/labs
 
 USER nginx
 EXPOSE 8080

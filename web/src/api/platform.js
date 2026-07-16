@@ -113,3 +113,26 @@ export async function terminateLab(labId) {
   });
   return payload.data;
 }
+
+export async function submitLabAction(labId, action) {
+  const payload = await request(`/api/v1/labs/${encodeURIComponent(labId)}/actions`, {
+    method: 'POST',
+    csrf: true,
+    body: {
+      operationId: newOperationId(action.actionType.toLowerCase()),
+      actionType: action.actionType,
+      targetInstanceId: action.targetInstanceId ?? null,
+      parameters: action.parameters || {},
+    },
+  });
+  return payload.data;
+}
+
+export async function submitTrafficBatch(labId, batch) {
+  const payload = await request(`/api/v1/labs/${encodeURIComponent(labId)}/traffic-batches`, {
+    method: 'POST',
+    csrf: true,
+    body: batch,
+  });
+  return payload.data.result;
+}

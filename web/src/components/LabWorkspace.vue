@@ -9,8 +9,10 @@ import {
 } from '@lucide/vue';
 import {computed} from 'vue';
 
+import ClusterControls from './ClusterControls.vue';
 import LifecyclePanel from './LifecyclePanel.vue';
 import OperationPanel from './OperationPanel.vue';
+import TrafficStage from './TrafficStage.vue';
 import TopologyPanel from './TopologyPanel.vue';
 
 const props = defineProps({
@@ -20,14 +22,17 @@ const props = defineProps({
   busy: Boolean,
   loading: Boolean,
   error: Object,
+  submitBatch: {type: Function, required: true},
 });
 
-defineEmits(['create', 'reset', 'terminate', 'refresh']);
+defineEmits(['create', 'reset', 'terminate', 'refresh', 'action']);
 
 const activeStatuses = new Set(['Preparing', 'Running', 'Expiring', 'Terminating']);
 const active = computed(() => activeStatuses.has(props.snapshot?.lab?.status));
 const canReset = computed(() => ['Running', 'Expiring'].includes(props.snapshot?.lab?.status));
 const canTerminate = computed(() => ['Preparing', 'Running', 'Expiring', 'Failed'].includes(props.snapshot?.lab?.status));
+const clusterRunning = computed(() => props.snapshot?.lab?.scenarioType === 'application_cluster' &&
+  props.snapshot?.lab?.status === 'Running' && !props.busy);
 
 const statusNames = {
   Preparing: '准备中',
@@ -107,6 +112,20 @@ const reasonNames = {
       </div>
 
       <TopologyPanel :lab="snapshot.lab" :topology="snapshot.topology" />
+      <TrafficStage
+        v-if="snapshot.lab.scenarioType === 'application_cluster' && snapshot.topology.instances.length"
+        :instances="snapshot.topology.instances"
+        :policy="snapshot.trafficPolicy"
+        :running="clusterRunning"
+        :submit-batch="submitBatch"
+      />
+      <ClusterControls
+        v-if="snapshot.lab.scenarioType === 'application_cluster' && snapshot.topology.instances.length"
+        :instances="snapshot.topology.instances"
+        :busy="busy"
+        :enabled="snapshot.lab.status === 'Running'"
+        @action="$emit('action', $event)"
+      />
       <LifecyclePanel
         v-if="!['Terminated', 'Failed'].includes(snapshot.lab.status)"
         :lab="snapshot.lab"

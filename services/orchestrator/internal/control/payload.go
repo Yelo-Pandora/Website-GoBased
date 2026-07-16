@@ -29,27 +29,30 @@ type instancePayload struct {
 }
 
 type updateCapacityPayload struct {
-	ScenarioTemplateID string `json:"scenarioTemplateId"`
-	InstanceName       string `json:"instanceName"`
-	PerformancePercent int    `json:"performancePercent"`
+	ScenarioTemplateID         string `json:"scenarioTemplateId"`
+	InstanceName               string `json:"instanceName"`
+	PerformancePercent         int    `json:"performancePercent"`
+	PreviousPerformancePercent int    `json:"previousPerformancePercent"`
 }
 
 type upstreamPayload struct {
 	Servers []struct {
-		Host   string `json:"host"`
-		Port   int    `json:"port"`
-		Weight int    `json:"weight"`
+		InstanceName string `json:"instanceName"`
+		Weight       int    `json:"weight"`
 	} `json:"servers"`
 }
 
-func (p upstreamPayload) nginxServers() []nginx.Server {
+func (p upstreamPayload) nginxServers(names resourceNames) ([]nginx.Server, error) {
 	servers := make([]nginx.Server, 0, len(p.Servers))
 	for _, server := range p.Servers {
+		if !validInstanceName(server.InstanceName) || server.Weight <= 0 || server.Weight > 100 {
+			return nil, errInvalidUpstream
+		}
 		servers = append(servers, nginx.Server{
-			Host: server.Host, Port: server.Port, Weight: server.Weight,
+			Host: names.appContainer(server.InstanceName), Port: 8080, Weight: server.Weight,
 		})
 	}
-	return servers
+	return servers, nil
 }
 
 type reconcilePayload struct {

@@ -1,6 +1,7 @@
 upstream lab_{{.NormalizedLabID}} {
+  zone lab_{{.NormalizedLabID}} 64k;
 {{range .Servers}}
-  server {{.Host}}:{{.Port}} weight={{.Weight}};
+  server {{.Host}}:{{.Port}} weight={{.Weight}} resolve;
 {{end}}
 }
 

@@ -11,6 +11,8 @@ import {
   login,
   logout,
   resetLab,
+  submitLabAction,
+  submitTrafficBatch,
   terminateLab,
 } from './api/platform.js';
 import CourseRail from './components/CourseRail.vue';
@@ -43,6 +45,8 @@ const selectedCourse = computed(() =>
 const activeCourseId = computed(() =>
   activeStatuses.has(snapshot.value?.lab?.status) ? snapshot.value.lab.courseId : null,
 );
+const labBusy = computed(() => requestBusy.value ||
+  busyOperationStatuses.has(snapshot.value?.latestOperation?.status));
 
 const messageByCode = {
   AUTH_REQUIRED: '登录状态已失效，请重新登录。',
@@ -56,6 +60,13 @@ const messageByCode = {
   RESOURCE_CAPACITY_EXCEEDED: '实验资源已达到平台上限。',
   DOCKER_UNAVAILABLE: '实验资源暂时不可用。',
   NETWORK_ERROR: '无法连接平台服务。',
+  TRAFFIC_REQUEST_INVALID: '批次参数或商品无效。',
+  RATE_LIMITED: '请求批次过快，请降低生成频率。',
+  LAB_UNAVAILABLE: '实验网关或应用实例暂时不可用。',
+  INSTANCE_NOT_FOUND: '目标实例不存在。',
+  MIN_INSTANCE_LIMIT: '集群必须至少保留一台实例。',
+  MAX_INSTANCE_LIMIT: '集群最多允许四台实例。',
+  ACTION_NOT_ALLOWED: '当前场景或负载均衡模式不允许该操作。',
 };
 
 function presentError(value) {
@@ -107,20 +118,29 @@ async function restoreLab() {
     const lastLabId = course.progress?.lastLabId;
     if (lastLabId && !candidates.includes(lastLabId)) candidates.push(lastLabId);
   }
+  let terminalSnapshot = null;
   for (const labId of candidates) {
     try {
       const restored = await getLab(labId);
-      snapshot.value = restored;
-      selectedCourseId.value = restored.lab.courseId;
-      rememberLab(labId);
-      schedulePoll();
-      return;
+      if (activeStatuses.has(restored.lab.status)) {
+        snapshot.value = restored;
+        selectedCourseId.value = restored.lab.courseId;
+        rememberLab(labId);
+        schedulePoll();
+        return;
+      }
+      terminalSnapshot ||= restored;
     } catch (value) {
       if (!(value instanceof ApiError) || value.code !== 'LAB_NOT_FOUND') throw value;
     }
   }
-  snapshot.value = null;
-  rememberLab('');
+  snapshot.value = terminalSnapshot;
+  if (terminalSnapshot) {
+    selectedCourseId.value = terminalSnapshot.lab.courseId;
+    rememberLab(terminalSnapshot.lab.id);
+  } else {
+    rememberLab('');
+  }
 }
 
 async function restoreSession() {
@@ -245,6 +265,26 @@ async function handleTerminate() {
   }
 }
 
+async function handleLabAction(action) {
+  if (!snapshot.value?.lab?.id) return;
+  requestBusy.value = true;
+  error.value = null;
+  try {
+    const data = await submitLabAction(snapshot.value.lab.id, action);
+    snapshot.value = {...snapshot.value, latestOperation: data.operation};
+    schedulePoll();
+  } catch (value) {
+    error.value = presentError(value);
+  } finally {
+    requestBusy.value = false;
+  }
+}
+
+async function handleTrafficBatch(batch) {
+  if (!snapshot.value?.lab?.id) throw new ApiError('实验不存在', {code: 'LAB_NOT_FOUND'});
+  return submitTrafficBatch(snapshot.value.lab.id, batch);
+}
+
 function selectCourse(course) {
   if (activeCourseId.value && activeCourseId.value !== course.id) return;
   selectedCourseId.value = course.id;
@@ -312,13 +352,15 @@ onBeforeUnmount(() => {
         :course="selectedCourse"
         :snapshot="snapshot"
         :now="now"
-        :busy="requestBusy"
+        :busy="labBusy"
         :loading="snapshotLoading"
         :error="error"
+        :submit-batch="handleTrafficBatch"
         @create="handleCreate"
         @reset="handleReset"
         @terminate="handleTerminate"
         @refresh="loadSnapshot"
+        @action="handleLabAction"
       />
     </div>
     <ApiConsole v-else />

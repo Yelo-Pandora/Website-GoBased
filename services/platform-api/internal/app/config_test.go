@@ -64,6 +64,10 @@ func TestLoadConfigLabControlDefaults(t *testing.T) {
 		cfg.LabReconcileInterval != time.Minute || !cfg.LabReconcileCleanup {
 		t.Fatalf("lifecycle config = %#v", cfg)
 	}
+	if cfg.TrafficRequestTimeout != 3*time.Second || cfg.TrafficRatePerSecond != 10 ||
+		cfg.TrafficBurst != 10 || cfg.TrafficLimiterEntries != 2048 {
+		t.Fatalf("traffic config = %#v", cfg)
+	}
 }
 
 func TestLoadConfigRejectsInvalidLabControlConfig(t *testing.T) {
@@ -84,6 +88,10 @@ func TestLoadConfigRejectsInvalidLabControlConfig(t *testing.T) {
 		{name: "lifecycle poll", key: "LAB_LIFECYCLE_POLL_INTERVAL", value: "0s"},
 		{name: "reconcile interval", key: "LAB_RECONCILE_INTERVAL", value: "0s"},
 		{name: "reconcile cleanup", key: "LAB_RECONCILE_CLEANUP", value: "sometimes"},
+		{name: "traffic timeout", key: "TRAFFIC_REQUEST_TIMEOUT", value: "0s"},
+		{name: "traffic rate", key: "TRAFFIC_RATE_PER_SECOND", value: "0"},
+		{name: "traffic burst", key: "TRAFFIC_BURST", value: "0"},
+		{name: "traffic limiter entries", key: "TRAFFIC_LIMITER_MAX_ENTRIES", value: "0"},
 	}
 
 	for _, test := range tests {

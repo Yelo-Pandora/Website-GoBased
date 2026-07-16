@@ -36,10 +36,26 @@ type labServiceStub struct {
 	resetErr        error
 	terminateResult lab.ActionResult
 	terminateErr    error
+	actionResult    lab.ActionResult
+	actionErr       error
+	actionInput     lab.ActionInput
 	userID          uint64
 	labID           string
 	operationID     string
 	courseID        uint64
+}
+
+func (s *labServiceStub) Action(
+	_ context.Context,
+	userID uint64,
+	labID string,
+	input lab.ActionInput,
+) (lab.ActionResult, error) {
+	s.userID = userID
+	s.labID = labID
+	s.operationID = input.OperationID
+	s.actionInput = input
+	return s.actionResult, s.actionErr
 }
 
 func (s *labServiceStub) Create(

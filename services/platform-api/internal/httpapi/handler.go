@@ -11,9 +11,11 @@ import (
 
 	"website-gobased/internal/health"
 	"website-gobased/internal/httpserver"
+	"website-gobased/internal/protocol"
 	"website-gobased/internal/version"
 	"website-gobased/services/platform-api/internal/course"
 	"website-gobased/services/platform-api/internal/lab"
+	"website-gobased/services/platform-api/internal/traffic"
 )
 
 type handler struct {
@@ -24,6 +26,7 @@ type handler struct {
 	labs           labService
 	authentication authenticationService
 	authConfig     AuthConfig
+	traffic        trafficService
 }
 
 func newHandler(
@@ -34,6 +37,7 @@ func newHandler(
 	labs labService,
 	authentication authenticationService,
 	authConfig AuthConfig,
+	traffic trafficService,
 ) *handler {
 	return &handler{
 		logger:         logger,
@@ -43,7 +47,47 @@ func newHandler(
 		labs:           labs,
 		authentication: authentication,
 		authConfig:     authConfig,
+		traffic:        traffic,
 	}
+}
+
+func (h *handler) submitTrafficBatch(ctx *gin.Context) {
+	var request protocol.TrafficBatchRequest
+	if err := decodeJSON(ctx, &request); err != nil || h.traffic == nil {
+		h.writeTrafficError(ctx, traffic.ErrInvalidRequest)
+		return
+	}
+	result, err := h.traffic.Submit(
+		ctx.Request.Context(),
+		currentLabUserID(ctx),
+		ctx.Param("id"),
+		request,
+	)
+	if err != nil {
+		h.writeTrafficError(ctx, err)
+		return
+	}
+	ctx.JSON(http.StatusOK, gin.H{"data": gin.H{"result": result}})
+}
+
+func (h *handler) writeTrafficError(ctx *gin.Context, err error) {
+	status := http.StatusServiceUnavailable
+	code := "LAB_UNAVAILABLE"
+	message := "lab traffic is unavailable"
+	switch {
+	case errors.Is(err, traffic.ErrInvalidRequest):
+		status, code, message = http.StatusBadRequest,
+			"TRAFFIC_REQUEST_INVALID", "traffic batch is invalid"
+	case errors.Is(err, traffic.ErrNotFound):
+		status, code, message = http.StatusNotFound, "LAB_NOT_FOUND", "lab not found"
+	case errors.Is(err, traffic.ErrNotRunning):
+		status, code, message = http.StatusConflict, "LAB_NOT_RUNNING", "lab is not running"
+	case errors.Is(err, traffic.ErrRateLimited):
+		status, code, message = http.StatusTooManyRequests, "RATE_LIMITED", "traffic rate limit exceeded"
+	case !errors.Is(err, traffic.ErrUnavailable):
+		h.logger.ErrorContext(ctx.Request.Context(), "submit traffic batch", "error", err)
+	}
+	httpserver.WriteError(ctx, status, code, message)
 }
 
 func (h *handler) listCourses(ctx *gin.Context) {
@@ -103,6 +147,16 @@ type createLabRequest struct {
 
 type labOperationRequest struct {
 	OperationID string `json:"operationId"`
+}
+
+type labActionRequest struct {
+	OperationID      string  `json:"operationId"`
+	ActionType       string  `json:"actionType"`
+	TargetInstanceID *string `json:"targetInstanceId"`
+	Parameters       struct {
+		PerformancePercent *int                 `json:"performancePercent,omitempty"`
+		Weights            []lab.InstanceWeight `json:"weights,omitempty"`
+	} `json:"parameters"`
 }
 
 func (h *handler) createLab(ctx *gin.Context) {
@@ -181,6 +235,31 @@ func (h *handler) terminateLab(ctx *gin.Context) {
 	})
 }
 
+func (h *handler) submitLabAction(ctx *gin.Context) {
+	var request labActionRequest
+	if err := decodeJSON(ctx, &request); err != nil {
+		h.writeLabError(ctx, lab.ErrInvalidRequest)
+		return
+	}
+	result, err := h.labs.Action(
+		ctx.Request.Context(),
+		currentLabUserID(ctx),
+		ctx.Param("id"),
+		lab.ActionInput{
+			OperationID:        request.OperationID,
+			ActionType:         request.ActionType,
+			TargetInstanceID:   request.TargetInstanceID,
+			PerformancePercent: request.Parameters.PerformancePercent,
+			Weights:            request.Parameters.Weights,
+		},
+	)
+	if err != nil {
+		h.writeLabError(ctx, err)
+		return
+	}
+	ctx.JSON(http.StatusAccepted, gin.H{"data": gin.H{"operation": result.Operation}})
+}
+
 func (h *handler) writeLabError(ctx *gin.Context, err error) {
 	status := http.StatusInternalServerError
 	code := "INTERNAL_ERROR"
@@ -199,6 +278,20 @@ func (h *handler) writeLabError(ctx *gin.Context, err error) {
 		status, code, message = http.StatusConflict, "LAB_BUSY", "lab has another operation in progress"
 	case errors.Is(err, lab.ErrNotRunning):
 		status, code, message = http.StatusConflict, "LAB_NOT_RUNNING", "lab is not running"
+	case errors.Is(err, lab.ErrInstanceNotFound):
+		status, code, message = http.StatusNotFound, "INSTANCE_NOT_FOUND", "lab instance not found"
+	case errors.Is(err, lab.ErrMinInstanceLimit):
+		status, code, message = http.StatusConflict,
+			"MIN_INSTANCE_LIMIT", "at least one instance must remain"
+	case errors.Is(err, lab.ErrMaxInstanceLimit):
+		status, code, message = http.StatusConflict,
+			"MAX_INSTANCE_LIMIT", "maximum instance count reached"
+	case errors.Is(err, lab.ErrActionNotAllowed):
+		status, code, message = http.StatusUnprocessableEntity,
+			"ACTION_NOT_ALLOWED", "lab action is not allowed"
+	case errors.Is(err, lab.ErrWeightInvalid):
+		status, code, message = http.StatusBadRequest,
+			"VALIDATION_FAILED", "instance weights are invalid"
 	case errors.Is(err, lab.ErrCapacityExceeded), errors.Is(err, lab.ErrInstanceLimit):
 		status, code, message = http.StatusServiceUnavailable,
 			"RESOURCE_CAPACITY_EXCEEDED", "lab resource capacity is exhausted"

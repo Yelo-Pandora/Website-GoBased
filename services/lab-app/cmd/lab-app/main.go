@@ -17,7 +17,11 @@ import (
 
 func main() {
 	logger := logging.New("lab-app")
-	cfg := app.LoadConfig()
+	cfg, err := app.LoadConfig()
+	if err != nil {
+		logger.Error("load lab application config", "error", err)
+		os.Exit(1)
+	}
 	if len(os.Args) > 1 && os.Args[1] == "healthcheck" {
 		if err := runHealthcheck(cfg.Addr); err != nil {
 			logger.Error("lab application healthcheck failed", "error", err)

@@ -27,7 +27,39 @@ var (
 	ErrNotRunning = errors.New("lab is not running")
 	// ErrStateConflict indicates that persisted state changed before an update.
 	ErrStateConflict = errors.New("lab state changed concurrently")
+	// ErrActionNotAllowed indicates that an action is unavailable for the scenario or mode.
+	ErrActionNotAllowed = errors.New("lab action is not allowed")
+	// ErrInstanceNotFound indicates that a target instance does not exist.
+	ErrInstanceNotFound = errors.New("lab instance was not found")
+	// ErrMinInstanceLimit indicates that removing an instance would leave no application server.
+	ErrMinInstanceLimit = errors.New("lab minimum instance limit reached")
+	// ErrMaxInstanceLimit indicates that adding an instance would exceed the lab limit.
+	ErrMaxInstanceLimit = errors.New("lab maximum instance limit reached")
+	// ErrWeightInvalid indicates that fixed weights are incomplete or outside the allowed range.
+	ErrWeightInvalid = errors.New("lab instance weights are invalid")
 )
+
+const (
+	ActionAddInstance            = "ADD_INSTANCE"
+	ActionRemoveInstance         = "REMOVE_INSTANCE"
+	ActionSetInstancePerformance = "SET_INSTANCE_PERFORMANCE"
+	ActionSetInstanceWeights     = "SET_INSTANCE_WEIGHTS"
+)
+
+// InstanceWeight is one fixed Nginx weight selected by the learner.
+type InstanceWeight struct {
+	InstanceID string `json:"instanceId"`
+	Weight     int    `json:"weight"`
+}
+
+// ActionInput is one validated user-facing topology action request.
+type ActionInput struct {
+	OperationID        string           `json:"operationId"`
+	ActionType         string           `json:"actionType"`
+	TargetInstanceID   *string          `json:"targetInstanceId,omitempty"`
+	PerformancePercent *int             `json:"performancePercent,omitempty"`
+	Weights            []InstanceWeight `json:"weights,omitempty"`
+}
 
 // Session is the persistent control-plane view of one lab.
 type Session struct {
@@ -60,6 +92,9 @@ type Instance struct {
 	PerformancePercent int     `json:"performancePercent"`
 	EffectiveCapacity  int     `json:"effectiveCapacity"`
 	CurrentWeight      int     `json:"currentWeight"`
+	RemainingCapacity  int     `json:"remainingCapacity"`
+	LoadRatio          float64 `json:"loadRatio"`
+	LoadState          string  `json:"loadState"`
 }
 
 // Resource is a persisted non-application resource owned by a lab.
@@ -100,6 +135,34 @@ type Topology struct {
 	Gateway   struct {
 		Status string `json:"status"`
 	} `json:"gateway"`
+	Nodes []TopologyNode `json:"nodes"`
+	Edges []TopologyEdge `json:"edges"`
+}
+
+// TopologyNode is one semantic node used by the traffic visualization.
+type TopologyNode struct {
+	ID   string `json:"id"`
+	Type string `json:"type"`
+}
+
+// TopologyEdge is one directed semantic traffic connection.
+type TopologyEdge struct {
+	From string `json:"from"`
+	To   string `json:"to"`
+}
+
+// IntegerPolicy is one bounded learner-controlled numeric setting.
+type IntegerPolicy struct {
+	Minimum int `json:"minimum"`
+	Maximum int `json:"maximum"`
+	Step    int `json:"step"`
+	Default int `json:"default"`
+}
+
+// TrafficPolicy exposes safe request-size and generation controls.
+type TrafficPolicy struct {
+	RequestUnits         IntegerPolicy `json:"requestUnits"`
+	GenerationIntervalMS IntegerPolicy `json:"generationIntervalMs"`
 }
 
 // Snapshot contains the state required to restore a lab page after a refresh.
@@ -108,6 +171,7 @@ type Snapshot struct {
 	Topology        Topology           `json:"topology"`
 	Resources       []Resource         `json:"-"`
 	LatestOperation *OperationSnapshot `json:"latestOperation"`
+	TrafficPolicy   TrafficPolicy      `json:"trafficPolicy"`
 }
 
 // CreatedOperation is the operation created atomically with a lab session.
@@ -160,6 +224,60 @@ type actionRepository interface {
 		now time.Time,
 	) (ActionResult, error)
 	FindSnapshot(ctx context.Context, labID string, userID uint64) (Snapshot, error)
+}
+
+type topologyActionRepository interface {
+	EnqueueTopologyAction(
+		ctx context.Context,
+		userID uint64,
+		labID string,
+		input ActionInput,
+		quota Quota,
+		now time.Time,
+	) (ActionResult, error)
+}
+
+// Action enqueues one idempotent stage-seven topology action.
+func (s *Service) Action(
+	ctx context.Context,
+	userID uint64,
+	labID string,
+	input ActionInput,
+) (ActionResult, error) {
+	if userID == 0 || !validLabID(labID) || !validOperationID(input.OperationID) ||
+		!validActionInput(input) {
+		return ActionResult{}, ErrInvalidRequest
+	}
+	repository, ok := s.repository.(topologyActionRepository)
+	if !ok {
+		return ActionResult{}, errors.New("lab repository does not support topology actions")
+	}
+	return repository.EnqueueTopologyAction(
+		ctx,
+		userID,
+		labID,
+		input,
+		s.quota,
+		s.now().UTC().Truncate(time.Microsecond),
+	)
+}
+
+func validActionInput(input ActionInput) bool {
+	switch input.ActionType {
+	case ActionAddInstance:
+		return input.TargetInstanceID == nil && input.PerformancePercent == nil && len(input.Weights) == 0
+	case ActionRemoveInstance:
+		return input.TargetInstanceID != nil && *input.TargetInstanceID != "" &&
+			input.PerformancePercent == nil && len(input.Weights) == 0
+	case ActionSetInstancePerformance:
+		return input.TargetInstanceID != nil && *input.TargetInstanceID != "" &&
+			input.PerformancePercent != nil && *input.PerformancePercent >= 20 &&
+			*input.PerformancePercent <= 100 && len(input.Weights) == 0
+	case ActionSetInstanceWeights:
+		return input.TargetInstanceID == nil && input.PerformancePercent == nil && len(input.Weights) > 0
+	default:
+		return false
+	}
 }
 
 // Service applies lab session rules before using persistent storage.
@@ -306,6 +424,7 @@ func (s *Service) Snapshot(
 		return Snapshot{}, err
 	}
 	s.decorateDeadlines(&snapshot.Lab)
+	s.decorateTrafficSnapshot(&snapshot)
 	return snapshot, nil
 }
 
@@ -317,5 +436,28 @@ func (s *Service) decorateDeadlines(session *Session) {
 	if session.LastEffectiveActionAt != nil {
 		value := session.LastEffectiveActionAt.UTC().Add(s.lifetime.IdleTimeout)
 		session.IdleExpiresAt = &value
+	}
+}
+
+func (s *Service) decorateTrafficSnapshot(snapshot *Snapshot) {
+	snapshot.TrafficPolicy = TrafficPolicy{
+		RequestUnits:         IntegerPolicy{Minimum: 1, Maximum: 100, Step: 1, Default: 60},
+		GenerationIntervalMS: IntegerPolicy{Minimum: 250, Maximum: 5000, Step: 250, Default: 1000},
+	}
+	snapshot.Topology.Nodes = []TopologyNode{
+		{ID: "user-pool", Type: "user_pool"},
+		{ID: "lab-gateway", Type: "gateway"},
+	}
+	snapshot.Topology.Edges = []TopologyEdge{{From: "user-pool", To: "lab-gateway"}}
+	for index := range snapshot.Topology.Instances {
+		instance := &snapshot.Topology.Instances[index]
+		instance.RemainingCapacity = instance.EffectiveCapacity
+		instance.LoadState = "idle"
+		snapshot.Topology.Nodes = append(snapshot.Topology.Nodes, TopologyNode{
+			ID: instance.ID, Type: "application",
+		})
+		snapshot.Topology.Edges = append(snapshot.Topology.Edges, TopologyEdge{
+			From: "lab-gateway", To: instance.ID,
+		})
 	}
 }

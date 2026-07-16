@@ -1,8 +1,8 @@
 # 互联网后端架构学习平台
 
-本仓库是互联网后端架构学习平台的后端 MVP 工程。
-当前已经实现课程、认证、学习进度、实验控制面基础和受限资源编排。
-浏览器侧实验闭环仍将在后续阶段开放。
+本仓库是互联网后端架构学习平台 MVP 工程。
+当前已经实现课程、认证、学习进度、实验生命周期、安全资源编排、
+应用集群、固定权重和浏览器生成的真实请求批次动画。
 
 ## 基础组件
 
@@ -33,6 +33,8 @@ docker compose ps
 
 ```bash
 make verify
+npm --prefix web test
+npm --prefix web run test:e2e
 docker compose config --quiet
 docker compose --profile images build lab-app
 curl --fail http://127.0.0.1:8080/readyz
@@ -49,3 +51,6 @@ curl --fail http://127.0.0.1:8080/readyz
 实验控制面和安全编排器边界分别见
 [`docs/lab-control-foundation-guide.md`](docs/lab-control-foundation-guide.md) 与
 [`docs/secure-orchestrator-guide.md`](docs/secure-orchestrator-guide.md)。
+
+阶段七真实流量、扩缩容、性能和固定权重验收见
+[`docs/stage-7-user-acceptance-guide.md`](docs/stage-7-user-acceptance-guide.md)。

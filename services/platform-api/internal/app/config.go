@@ -34,6 +34,10 @@ type Config struct {
 	LabLifecyclePoll       time.Duration
 	LabReconcileInterval   time.Duration
 	LabReconcileCleanup    bool
+	TrafficRequestTimeout  time.Duration
+	TrafficRatePerSecond   int
+	TrafficBurst           int
+	TrafficLimiterEntries  int
 	AuthSessionTTL         time.Duration
 	AuthCookieName         string
 	AuthCookieSecure       bool
@@ -174,6 +178,22 @@ func LoadConfig() (Config, error) {
 	if err != nil {
 		return Config{}, err
 	}
+	trafficRequestTimeout, err := duration("TRAFFIC_REQUEST_TIMEOUT", 3*time.Second)
+	if err != nil {
+		return Config{}, err
+	}
+	trafficRatePerSecond, err := positiveInt("TRAFFIC_RATE_PER_SECOND", 10)
+	if err != nil {
+		return Config{}, err
+	}
+	trafficBurst, err := positiveInt("TRAFFIC_BURST", 10)
+	if err != nil {
+		return Config{}, err
+	}
+	trafficLimiterEntries, err := positiveInt("TRAFFIC_LIMITER_MAX_ENTRIES", 2048)
+	if err != nil {
+		return Config{}, err
+	}
 	labOperationWorkerID := sharedconfig.String(
 		"LAB_OPERATION_WORKER_ID",
 		sharedconfig.String("HOSTNAME", "platform-api"),
@@ -208,6 +228,10 @@ func LoadConfig() (Config, error) {
 		LabLifecyclePoll:       labLifecyclePoll,
 		LabReconcileInterval:   labReconcileInterval,
 		LabReconcileCleanup:    labReconcileCleanup,
+		TrafficRequestTimeout:  trafficRequestTimeout,
+		TrafficRatePerSecond:   trafficRatePerSecond,
+		TrafficBurst:           trafficBurst,
+		TrafficLimiterEntries:  trafficLimiterEntries,
 		AuthSessionTTL:         authSessionTTL,
 		AuthCookieName:         authCookieName,
 		AuthCookieSecure:       authCookieSecure,

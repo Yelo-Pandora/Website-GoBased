@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"errors"
 	"time"
+
+	"website-gobased/services/platform-api/internal/lab"
 )
 
 var (
@@ -22,10 +24,21 @@ const (
 	StatusFailed       = "failed"
 	StatusCompensating = "compensating"
 
-	ActionCreateLab  = "CREATE_LAB"
-	ActionResetLab   = "RESET_LAB"
-	ActionDestroyLab = "DESTROY_LAB"
+	ActionCreateLab              = "CREATE_LAB"
+	ActionResetLab               = "RESET_LAB"
+	ActionDestroyLab             = "DESTROY_LAB"
+	ActionAddInstance            = "ADD_INSTANCE"
+	ActionRemoveInstance         = "REMOVE_INSTANCE"
+	ActionSetInstancePerformance = "SET_INSTANCE_PERFORMANCE"
+	ActionSetInstanceWeights     = "SET_INSTANCE_WEIGHTS"
 )
+
+// TopologyResult is the normalized result of one stage-seven topology action.
+type TopologyResult struct {
+	Instance          *ProvisionInstance   `json:"instance,omitempty"`
+	RemovedInstanceID string               `json:"removedInstanceId,omitempty"`
+	Weights           []lab.InstanceWeight `json:"weights,omitempty"`
+}
 
 // ProvisionResult is the validated resource result returned by the orchestrator.
 type ProvisionResult struct {

@@ -25,8 +25,8 @@ test('learner completes the stage 4-6 lab lifecycle', async ({page}) => {
   await page.getByRole('button', {name: /创建实验|新建实验/}).click();
 
   await expect(page.getByText('运行中', {exact: true})).toBeVisible();
-  await expect(page.getByText('实验网关')).toBeVisible();
-  await expect(page.getByText('app-1', {exact: true})).toBeVisible();
+  await expect(page.getByRole('region', {name: '实验拓扑'}).getByText('实验网关')).toBeVisible();
+  await expect(page.getByRole('region', {name: '实验拓扑'}).getByText('app-1', {exact: true})).toBeVisible();
   await expect(page.getByText('空闲时限')).toBeVisible();
   await expect(page.getByText('最长时限')).toBeVisible();
   await expect(page.locator('.deadline-item__header strong').first()).not.toHaveText('--:--');
@@ -68,6 +68,42 @@ test('workspace remains usable at a mobile viewport', async ({page}) => {
     scrollWidth: document.documentElement.scrollWidth,
   }));
   expect(dimensions.scrollWidth).toBeLessThanOrEqual(dimensions.clientWidth);
+});
+
+test('learner drives real traffic and fixed cluster controls', async ({page}) => {
+  await login(page);
+  await terminateActiveLab(page);
+  await page.getByRole('button', {name: /应用集群与负载均衡/}).click();
+  await page.getByRole('button', {name: /创建实验|新建实验/}).click();
+  await expect(page.getByText('运行中', {exact: true})).toBeVisible();
+
+  const trafficPanel = page.locator('.traffic-panel');
+  await expect(trafficPanel.getByText('真实请求流')).toBeVisible();
+  await trafficPanel.getByRole('button', {name: '发送一批'}).click();
+  await expect(trafficPanel.getByText(/已处理\s+60/)).toBeVisible();
+
+  const controls = page.locator('.cluster-controls');
+  await controls.getByRole('button', {name: '增加实例'}).click();
+  await expect(page.getByText('app-2', {exact: true}).first()).toBeVisible();
+  await expect(page.getByText('增加实例', {exact: true}).last()).toBeVisible();
+  await expect(page.locator('.operation-row .status-badge')).toHaveText('succeeded');
+
+  const weightInputs = controls.locator('.weight-editor input');
+  await weightInputs.nth(0).fill('20');
+  await weightInputs.nth(1).fill('80');
+  await controls.getByRole('button', {name: '应用权重'}).click();
+  await expect(page.getByText('调整固定权重', {exact: true})).toBeVisible();
+  await expect(page.locator('.operation-row .status-badge')).toHaveText('succeeded');
+
+  const appTwo = controls.locator('.cluster-instance-row').filter({hasText: 'app-2'});
+  await appTwo.getByRole('combobox').selectOption('30');
+  await appTwo.getByRole('button', {name: '应用'}).click();
+  await expect(page.getByText('调整实例性能', {exact: true})).toBeVisible();
+  await expect(appTwo.getByText(/容量 30/)).toBeVisible();
+
+  page.once('dialog', (dialog) => dialog.accept());
+  await page.getByRole('button', {name: '结束', exact: true}).click();
+  await expect(page.getByText('已结束', {exact: true})).toBeVisible();
 });
 
 test('learner observes automatic idle expiration', async ({page}) => {

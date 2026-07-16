@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"website-gobased/internal/protocol"
+	"website-gobased/services/platform-api/internal/lab"
 )
 
 type queue interface {
@@ -47,6 +48,14 @@ type queue interface {
 		ctx context.Context,
 		record Record,
 		resultValue any,
+		errorCode string,
+		errorMessage string,
+		now time.Time,
+	) error
+	CompleteTopology(
+		ctx context.Context,
+		record Record,
+		resultValue TopologyResult,
 		errorCode string,
 		errorMessage string,
 		now time.Time,
@@ -166,6 +175,9 @@ func (w *Worker) processOne(ctx context.Context) (bool, error) {
 	); err != nil {
 		return true, err
 	}
+	if isTopologyAction(record.Action) {
+		return true, w.processTopology(ctx, record)
+	}
 	commandType, ok := commandTypeForAction(record.Action)
 	if !ok {
 		return true, w.queue.CompleteFailure(
@@ -213,6 +225,223 @@ func (w *Worker) processOne(ctx context.Context) (bool, error) {
 			"orchestrator did not return a final command result",
 		)
 	}
+}
+
+type topologyServer struct {
+	InstanceName string `json:"instanceName"`
+	Weight       int    `json:"weight"`
+}
+
+type topologyPayload struct {
+	ScenarioTemplateID         string           `json:"scenarioTemplateId"`
+	InstanceName               string           `json:"instanceName"`
+	PerformancePercent         int              `json:"performancePercent"`
+	PreviousPerformancePercent int              `json:"previousPerformancePercent"`
+	Servers                    []topologyServer `json:"servers"`
+	PreviousServers            []topologyServer `json:"previousServers"`
+	Request                    struct {
+		Weights []lab.InstanceWeight `json:"weights"`
+	} `json:"request"`
+}
+
+func isTopologyAction(action string) bool {
+	return action == ActionAddInstance || action == ActionRemoveInstance ||
+		action == ActionSetInstancePerformance || action == ActionSetInstanceWeights
+}
+
+func (w *Worker) processTopology(ctx context.Context, record Record) error {
+	var payload topologyPayload
+	if err := json.Unmarshal(record.Payload, &payload); err != nil {
+		return w.completeTopologyFailure(ctx, record, "INVALID_OPERATION", "topology operation payload is invalid")
+	}
+	switch record.Action {
+	case ActionAddInstance:
+		return w.addInstance(ctx, record, payload)
+	case ActionRemoveInstance:
+		return w.removeInstance(ctx, record, payload)
+	case ActionSetInstancePerformance:
+		return w.setInstancePerformance(ctx, record, payload)
+	case ActionSetInstanceWeights:
+		return w.setInstanceWeights(ctx, record, payload)
+	default:
+		return w.completeTopologyFailure(ctx, record, "ACTION_NOT_SUPPORTED", "topology action is not supported")
+	}
+}
+
+func (w *Worker) addInstance(ctx context.Context, record Record, payload topologyPayload) error {
+	response, err := w.executeTopologyCommand(ctx, record, "CREATE_APP_INSTANCE", map[string]any{
+		"scenarioTemplateId": payload.ScenarioTemplateID,
+		"instanceName":       payload.InstanceName,
+		"performancePercent": payload.PerformancePercent,
+	})
+	if err != nil {
+		return w.completeTopologyFailure(ctx, record, "ORCHESTRATOR_UNAVAILABLE", "application instance could not be created")
+	}
+	if response.Status != "succeeded" {
+		code, message := commandError(response.Error)
+		return w.completeTopologyFailure(ctx, record, code, message)
+	}
+	instance, err := decodeProvisionInstance(response.Result)
+	if err != nil {
+		return w.completeTopologyFailure(ctx, record, "ORCHESTRATOR_RESPONSE_INCOMPLETE", "application instance result is invalid")
+	}
+	if err := w.applyTopologyServers(ctx, record, payload.Servers); err != nil {
+		_, _ = w.executeTopologyCommand(ctx, record, "DELETE_APP_INSTANCE", map[string]any{
+			"instanceName": payload.InstanceName,
+		})
+		return w.completeTopologyFailure(ctx, record, "NGINX_CONFIG_INVALID", "application upstream could not be applied")
+	}
+	return w.queue.CompleteTopology(
+		ctx, record, TopologyResult{Instance: &instance}, "", "",
+		w.now().UTC().Truncate(time.Microsecond),
+	)
+}
+
+func (w *Worker) removeInstance(ctx context.Context, record Record, payload topologyPayload) error {
+	if err := w.applyTopologyServers(ctx, record, payload.Servers); err != nil {
+		return w.completeTopologyFailure(ctx, record, "NGINX_CONFIG_INVALID", "application upstream could not be applied")
+	}
+	timer := time.NewTimer(200 * time.Millisecond)
+	select {
+	case <-ctx.Done():
+		timer.Stop()
+		_ = w.applyTopologyServers(context.WithoutCancel(ctx), record, payload.PreviousServers)
+		return ctx.Err()
+	case <-timer.C:
+	}
+	response, err := w.executeTopologyCommand(ctx, record, "DELETE_APP_INSTANCE", map[string]any{
+		"instanceName": payload.InstanceName,
+	})
+	if err != nil || response.Status != "succeeded" {
+		_ = w.applyTopologyServers(context.WithoutCancel(ctx), record, payload.PreviousServers)
+		if err != nil {
+			return w.completeTopologyFailure(ctx, record, "ORCHESTRATOR_UNAVAILABLE", "application instance could not be removed")
+		}
+		code, message := commandError(response.Error)
+		return w.completeTopologyFailure(ctx, record, code, message)
+	}
+	return w.queue.CompleteTopology(
+		ctx, record, TopologyResult{RemovedInstanceID: payload.InstanceName}, "", "",
+		w.now().UTC().Truncate(time.Microsecond),
+	)
+}
+
+func (w *Worker) setInstancePerformance(ctx context.Context, record Record, payload topologyPayload) error {
+	response, err := w.executeTopologyCommand(ctx, record, "UPDATE_APP_CAPACITY", map[string]any{
+		"scenarioTemplateId":         payload.ScenarioTemplateID,
+		"instanceName":               payload.InstanceName,
+		"performancePercent":         payload.PerformancePercent,
+		"previousPerformancePercent": payload.PreviousPerformancePercent,
+	})
+	if err != nil {
+		return w.completeTopologyFailure(ctx, record, "ORCHESTRATOR_UNAVAILABLE", "application capacity could not be updated")
+	}
+	if response.Status != "succeeded" {
+		code, message := commandError(response.Error)
+		return w.completeTopologyFailure(ctx, record, code, message)
+	}
+	instance, err := decodeProvisionInstance(response.Result)
+	if err != nil {
+		return w.completeTopologyFailure(ctx, record, "ORCHESTRATOR_RESPONSE_INCOMPLETE", "application capacity result is invalid")
+	}
+	if err := w.applyTopologyServers(ctx, record, payload.Servers); err != nil {
+		_, _ = w.executeTopologyCommand(context.WithoutCancel(ctx), record, "UPDATE_APP_CAPACITY", map[string]any{
+			"scenarioTemplateId":         payload.ScenarioTemplateID,
+			"instanceName":               payload.InstanceName,
+			"performancePercent":         payload.PreviousPerformancePercent,
+			"previousPerformancePercent": payload.PerformancePercent,
+		})
+		_ = w.applyTopologyServers(context.WithoutCancel(ctx), record, payload.PreviousServers)
+		return w.completeTopologyFailure(ctx, record, "NGINX_CONFIG_INVALID", "application upstream could not be refreshed")
+	}
+	return w.queue.CompleteTopology(
+		ctx, record, TopologyResult{Instance: &instance}, "", "",
+		w.now().UTC().Truncate(time.Microsecond),
+	)
+}
+
+func (w *Worker) setInstanceWeights(ctx context.Context, record Record, payload topologyPayload) error {
+	if err := w.applyTopologyServers(ctx, record, payload.Servers); err != nil {
+		return w.completeTopologyFailure(ctx, record, "NGINX_CONFIG_INVALID", "application weights could not be applied")
+	}
+	return w.queue.CompleteTopology(
+		ctx, record, TopologyResult{Weights: payload.Request.Weights}, "", "",
+		w.now().UTC().Truncate(time.Microsecond),
+	)
+}
+
+func (w *Worker) applyTopologyServers(
+	ctx context.Context,
+	record Record,
+	servers []topologyServer,
+) error {
+	response, err := w.executeTopologyCommand(ctx, record, "APPLY_LAB_UPSTREAM", map[string]any{
+		"servers": servers,
+	})
+	if err != nil {
+		return err
+	}
+	if response.Status != "succeeded" {
+		code, message := commandError(response.Error)
+		return fmt.Errorf("%s: %s", code, message)
+	}
+	return nil
+}
+
+func (w *Worker) executeTopologyCommand(
+	ctx context.Context,
+	record Record,
+	commandType string,
+	payload any,
+) (protocol.CommandResponse, error) {
+	commandID, err := w.newCommandID()
+	if err != nil {
+		return protocol.CommandResponse{}, err
+	}
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return protocol.CommandResponse{}, err
+	}
+	commandCtx, cancel := context.WithTimeout(ctx, w.config.CommandTimeout)
+	defer cancel()
+	return w.executor.Execute(commandCtx, protocol.Command{
+		CommandType: commandType,
+		CommandID:   commandID,
+		OperationID: record.OperationID,
+		LabID:       record.LabID,
+		RequestedBy: strconv.FormatUint(record.RequestedBy, 10),
+		Payload:     body,
+	})
+}
+
+func (w *Worker) completeTopologyFailure(
+	ctx context.Context,
+	record Record,
+	code string,
+	message string,
+) error {
+	return w.queue.CompleteTopology(
+		ctx, record, TopologyResult{}, code, message,
+		w.now().UTC().Truncate(time.Microsecond),
+	)
+}
+
+func decodeProvisionInstance(value any) (ProvisionInstance, error) {
+	body, err := json.Marshal(value)
+	if err != nil {
+		return ProvisionInstance{}, err
+	}
+	var instance ProvisionInstance
+	if err := json.Unmarshal(body, &instance); err != nil {
+		return ProvisionInstance{}, err
+	}
+	if instance.InstanceName == "" || instance.ContainerID == "" ||
+		instance.ContainerName == "" || instance.CPULimitCores <= 0 ||
+		instance.MemoryLimitMB <= 0 || instance.PerformancePercent <= 0 ||
+		instance.EffectiveCapacity <= 0 || instance.CurrentWeight <= 0 {
+		return ProvisionInstance{}, errors.New("application instance result is incomplete")
+	}
+	return instance, nil
 }
 
 func (w *Worker) completeFailure(

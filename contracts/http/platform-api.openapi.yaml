@@ -382,6 +382,59 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+  /api/v1/labs/{labId}/actions:
+    post:
+      tags: [Labs]
+      summary: Submit one guided cluster topology action
+      operationId: submitLabAction
+      security:
+        - sessionCookie: []
+      parameters:
+        - $ref: "#/components/parameters/LabID"
+        - $ref: "#/components/parameters/CSRFToken"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/LabTopologyActionRequest"
+      responses:
+        "202":
+          description: The idempotent topology action was accepted.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LabActionResponse"
+        "400":
+          $ref: "#/components/responses/ValidationFailed"
+        "401":
+          $ref: "#/components/responses/AuthRequired"
+        "403":
+          $ref: "#/components/responses/CSRFInvalid"
+        "404":
+          description: The lab or target instance does not exist.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "409":
+          description: The lab is busy, not running, or at an instance boundary.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "422":
+          description: The action is not available for the current scenario or mode.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "503":
+          description: Trusted capacity, Docker, or Nginx resources are unavailable.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
 components:
   securitySchemes:
     sessionCookie:
@@ -630,6 +683,43 @@ components:
           type: string
           minLength: 1
           maxLength: 64
+    LabTopologyActionRequest:
+      type: object
+      additionalProperties: false
+      required: [operationId, actionType, targetInstanceId, parameters]
+      properties:
+        operationId:
+          type: string
+          minLength: 1
+          maxLength: 64
+        actionType:
+          type: string
+          enum: [ADD_INSTANCE, REMOVE_INSTANCE, SET_INSTANCE_PERFORMANCE, SET_INSTANCE_WEIGHTS]
+        targetInstanceId:
+          oneOf:
+            - type: string
+            - type: "null"
+        parameters:
+          type: object
+          additionalProperties: false
+          properties:
+            performancePercent:
+              type: integer
+              minimum: 20
+              maximum: 100
+            weights:
+              type: array
+              items:
+                type: object
+                additionalProperties: false
+                required: [instanceId, weight]
+                properties:
+                  instanceId:
+                    type: string
+                  weight:
+                    type: integer
+                    minimum: 1
+                    maximum: 100
     LabSession:
       type: object
       required:
@@ -734,6 +824,9 @@ components:
         - performancePercent
         - effectiveCapacity
         - currentWeight
+        - remainingCapacity
+        - loadRatio
+        - loadState
       properties:
         instanceId:
           type: string
@@ -751,19 +844,28 @@ components:
           type: integer
         currentWeight:
           type: integer
+        remainingCapacity:
+          type: integer
+          minimum: 0
+        loadRatio:
+          type: number
+          minimum: 0
+        loadState:
+          type: string
+          enum: [idle, normal, high, overloaded, unavailable]
     LabSnapshotResponse:
       type: object
       required: [data]
       properties:
         data:
           type: object
-          required: [lab, topology, latestOperation]
+          required: [lab, topology, latestOperation, trafficPolicy]
           properties:
             lab:
               $ref: "#/components/schemas/LabSession"
             topology:
               type: object
-              required: [instances, redis, gateway]
+              required: [instances, redis, gateway, nodes, edges]
               properties:
                 instances:
                   type: array
@@ -783,10 +885,51 @@ components:
                   properties:
                     status:
                       type: string
+                nodes:
+                  type: array
+                  items:
+                    type: object
+                    required: [id, type]
+                    properties:
+                      id:
+                        type: string
+                      type:
+                        type: string
+                        enum: [user_pool, gateway, application]
+                edges:
+                  type: array
+                  items:
+                    type: object
+                    required: [from, to]
+                    properties:
+                      from:
+                        type: string
+                      to:
+                        type: string
             latestOperation:
               oneOf:
                 - $ref: "#/components/schemas/LabOperation"
                 - type: "null"
+            trafficPolicy:
+              type: object
+              required: [requestUnits, generationIntervalMs]
+              properties:
+                requestUnits:
+                  $ref: "#/components/schemas/IntegerPolicy"
+                generationIntervalMs:
+                  $ref: "#/components/schemas/IntegerPolicy"
+    IntegerPolicy:
+      type: object
+      required: [minimum, maximum, step, default]
+      properties:
+        minimum:
+          type: integer
+        maximum:
+          type: integer
+        step:
+          type: integer
+        default:
+          type: integer
     LabCreateResponse:
       type: object
       required: [data]
@@ -880,7 +1023,13 @@ components:
           $ref: "#/components/schemas/TrafficInstanceState"
     TrafficInstanceState:
       type: object
-      required: [effectiveCapacity, remainingCapacity, loadRatio, loadState]
+      required:
+        - effectiveCapacity
+        - remainingCapacity
+        - loadRatio
+        - loadState
+        - capacityWindowStartedAt
+        - capacityWindowEndsAt
       properties:
         effectiveCapacity:
           type: integer
@@ -894,6 +1043,12 @@ components:
         loadState:
           type: string
           enum: [idle, normal, high, overloaded, unavailable]
+        capacityWindowStartedAt:
+          type: string
+          format: date-time
+        capacityWindowEndsAt:
+          type: string
+          format: date-time
     ErrorResponse:
       type: object
       required: [error, requestId]
