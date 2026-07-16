@@ -10,6 +10,7 @@ import (
 
 	"website-gobased/internal/protocol"
 	"website-gobased/services/orchestrator/internal/dockerapi"
+	"website-gobased/services/orchestrator/internal/labdb"
 	"website-gobased/services/orchestrator/internal/nginx"
 	templates "website-gobased/services/orchestrator/internal/template"
 )
@@ -87,6 +88,8 @@ type databaseStub struct {
 	failProvision  bool
 	provisionCount int
 	destroyCount   int
+	managed        []labdb.ManagedDatabase
+	destroyedNames []string
 }
 
 func (d *databaseStub) Provision(context.Context, string, string, string) error {
@@ -98,10 +101,15 @@ func (d *databaseStub) Provision(context.Context, string, string, string) error 
 	return nil
 }
 func (*databaseStub) Reset(context.Context, string) error { return nil }
-func (d *databaseStub) Destroy(context.Context, string, string) error {
+func (d *databaseStub) Destroy(_ context.Context, databaseName string, _ string) error {
 	d.destroyed = true
 	d.destroyCount++
+	d.destroyedNames = append(d.destroyedNames, databaseName)
 	return nil
+}
+
+func (d *databaseStub) ListManaged(context.Context) ([]labdb.ManagedDatabase, error) {
+	return append([]labdb.ManagedDatabase(nil), d.managed...), nil
 }
 
 type nginxStub struct {
@@ -332,6 +340,46 @@ func TestReconcileRejectsDuplicateExpectedLabIDs(t *testing.T) {
 }`),
 	})
 	if response.Status != "rejected" || errorCode(response.Error) != "INVALID_COMMAND" {
+		t.Fatalf("Execute() = %#v", response)
+	}
+}
+
+func TestReconcileCleansOrphanDatabases(t *testing.T) {
+	service, _, database, _ := newTestService(t)
+	database.managed = []labdb.ManagedDatabase{
+		{DatabaseName: "lab_abcdef12", UserName: "lab_abcdef12_user"},
+		{DatabaseName: "lab_deadbeef", UserName: "lab_deadbeef_user"},
+	}
+	response := service.Execute(context.Background(), protocol.Command{
+		CommandType: commandReconcileResources,
+		CommandID:   "cmd-reconcile-database",
+		OperationID: "op-reconcile-database",
+		LabID:       "lab-abcdef12",
+		RequestedBy: "1",
+		Payload: []byte(`{
+  "expectedLabIds":["lab-abcdef12"],
+  "cleanup":true
+}`),
+	})
+	if response.Status != "succeeded" {
+		t.Fatalf("Execute() = %#v", response)
+	}
+	if len(database.destroyedNames) != 1 || database.destroyedNames[0] != "lab_deadbeef" {
+		t.Fatalf("destroyed databases = %#v", database.destroyedNames)
+	}
+}
+
+func TestDestroyAcceptsLifecycleReasonMetadata(t *testing.T) {
+	service, _, _, _ := newTestService(t)
+	response := service.Execute(context.Background(), protocol.Command{
+		CommandType: commandDestroyLab,
+		CommandID:   "cmd-destroy-lifecycle",
+		OperationID: "op-destroy-lifecycle",
+		LabID:       "lab-abcdef12",
+		RequestedBy: "system",
+		Payload:     []byte(`{"reason":"idle_timeout"}`),
+	})
+	if response.Status != "succeeded" {
 		t.Fatalf("Execute() = %#v", response)
 	}
 }

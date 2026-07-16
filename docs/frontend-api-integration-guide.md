@@ -533,6 +533,8 @@ Set-Cookie: session=<opaque-token>; HttpOnly; SameSite=Strict; Path=/
       "redisEnabled": false,
       "startedAt": "2026-07-13T06:30:12Z",
       "lastEffectiveActionAt": "2026-07-13T06:32:10Z",
+      "idleExpiresAt": "2026-07-13T06:42:10Z",
+      "maximumExpiresAt": "2026-07-13T07:00:12Z",
       "terminatedAt": null,
       "terminationReason": null,
       "createdAt": "2026-07-13T06:30:00Z",
@@ -569,10 +571,13 @@ Set-Cookie: session=<opaque-token>; HttpOnly; SameSite=Strict; Path=/
 明确来源字段包括实验状态、模板 ID、平衡模式、Redis 状态、实例资源、
 性能比例、有效容量、权重和操作状态。
 
-以下计算字段尚未在阶段五快照中返回，将在生命周期和前端生成流量阶段接入：
+以下截止字段由阶段六根据持久化活动时间计算：
 
 - `idleExpiresAt`
 - `maximumExpiresAt`
+
+以下运行时计算字段仍待阶段七的容量批次接入：
+
 - `capacity.totalEffectiveCapacity`
 - `trafficPolicy`
 - `cache`

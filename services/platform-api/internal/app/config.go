@@ -28,6 +28,12 @@ type Config struct {
 	LabOperationPoll       time.Duration
 	LabOperationLease      time.Duration
 	LabOrchestratorTimeout time.Duration
+	LabIdleTimeout         time.Duration
+	LabMaxDuration         time.Duration
+	LabExpiringLead        time.Duration
+	LabLifecyclePoll       time.Duration
+	LabReconcileInterval   time.Duration
+	LabReconcileCleanup    bool
 	AuthSessionTTL         time.Duration
 	AuthCookieName         string
 	AuthCookieSecure       bool
@@ -139,6 +145,35 @@ func LoadConfig() (Config, error) {
 			"LAB_OPERATION_LEASE_DURATION must exceed LAB_ORCHESTRATOR_TIMEOUT",
 		)
 	}
+	labIdleTimeout, err := duration("LAB_IDLE_TIMEOUT", 10*time.Minute)
+	if err != nil {
+		return Config{}, err
+	}
+	labMaxDuration, err := duration("LAB_MAX_DURATION", 30*time.Minute)
+	if err != nil {
+		return Config{}, err
+	}
+	labExpiringLead, err := duration("LAB_EXPIRING_LEAD", time.Minute)
+	if err != nil {
+		return Config{}, err
+	}
+	if labExpiringLead >= labIdleTimeout || labExpiringLead >= labMaxDuration {
+		return Config{}, fmt.Errorf(
+			"LAB_EXPIRING_LEAD must be shorter than LAB_IDLE_TIMEOUT and LAB_MAX_DURATION",
+		)
+	}
+	labLifecyclePoll, err := duration("LAB_LIFECYCLE_POLL_INTERVAL", 5*time.Second)
+	if err != nil {
+		return Config{}, err
+	}
+	labReconcileInterval, err := duration("LAB_RECONCILE_INTERVAL", time.Minute)
+	if err != nil {
+		return Config{}, err
+	}
+	labReconcileCleanup, err := boolean("LAB_RECONCILE_CLEANUP", true)
+	if err != nil {
+		return Config{}, err
+	}
 	labOperationWorkerID := sharedconfig.String(
 		"LAB_OPERATION_WORKER_ID",
 		sharedconfig.String("HOSTNAME", "platform-api"),
@@ -167,6 +202,12 @@ func LoadConfig() (Config, error) {
 		LabOperationPoll:       labOperationPoll,
 		LabOperationLease:      labOperationLease,
 		LabOrchestratorTimeout: labOrchestratorTimeout,
+		LabIdleTimeout:         labIdleTimeout,
+		LabMaxDuration:         labMaxDuration,
+		LabExpiringLead:        labExpiringLead,
+		LabLifecyclePoll:       labLifecyclePoll,
+		LabReconcileInterval:   labReconcileInterval,
+		LabReconcileCleanup:    labReconcileCleanup,
 		AuthSessionTTL:         authSessionTTL,
 		AuthCookieName:         authCookieName,
 		AuthCookieSecure:       authCookieSecure,

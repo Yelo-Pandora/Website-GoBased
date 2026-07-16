@@ -15,6 +15,7 @@ import (
 	"website-gobased/services/platform-api/internal/course"
 	"website-gobased/services/platform-api/internal/httpapi"
 	"website-gobased/services/platform-api/internal/lab"
+	"website-gobased/services/platform-api/internal/lifecycle"
 	"website-gobased/services/platform-api/internal/operation"
 	"website-gobased/services/platform-api/internal/orchestrator"
 )
@@ -63,10 +64,32 @@ func Run(ctx context.Context, cfg Config, logger *slog.Logger) error {
 		return fmt.Errorf("configure lab operation worker: %w", err)
 	}
 	go operationWorker.Run(ctx)
+	lifecycleScheduler, err := lifecycle.NewScheduler(
+		logger,
+		lifecycle.NewRepository(database),
+		orchestratorClient,
+		lifecycle.SchedulerConfig{
+			LifecyclePoll:     cfg.LabLifecyclePoll,
+			ReconcileInterval: cfg.LabReconcileInterval,
+			ReconcileCleanup:  cfg.LabReconcileCleanup,
+			Deadlines: lifecycle.Config{
+				IdleTimeout:  cfg.LabIdleTimeout,
+				MaxDuration:  cfg.LabMaxDuration,
+				ExpiringLead: cfg.LabExpiringLead,
+			},
+		},
+	)
+	if err != nil {
+		return fmt.Errorf("configure lab lifecycle scheduler: %w", err)
+	}
+	go lifecycleScheduler.Run(ctx)
 	labs := lab.NewService(lab.NewRepository(database), lab.Quota{
 		MaxActiveLabs:          cfg.LabMaxActive,
 		MaxTemporaryContainers: cfg.LabMaxTempContainers,
 		MaxInstancesPerLab:     cfg.LabMaxInstances,
+	}, lab.LifetimeConfig{
+		IdleTimeout: cfg.LabIdleTimeout,
+		MaxDuration: cfg.LabMaxDuration,
 	})
 
 	server := &http.Server{

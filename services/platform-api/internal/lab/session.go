@@ -41,6 +41,8 @@ type Session struct {
 	RedisEnabled          bool       `json:"redisEnabled"`
 	StartedAt             *time.Time `json:"startedAt"`
 	LastEffectiveActionAt *time.Time `json:"lastEffectiveActionAt"`
+	IdleExpiresAt         *time.Time `json:"idleExpiresAt"`
+	MaximumExpiresAt      *time.Time `json:"maximumExpiresAt"`
 	TerminatedAt          *time.Time `json:"terminatedAt"`
 	TerminationReason     *string    `json:"terminationReason"`
 	CreatedAt             time.Time  `json:"createdAt"`
@@ -164,19 +166,36 @@ type actionRepository interface {
 type Service struct {
 	repository createRepository
 	quota      Quota
+	lifetime   LifetimeConfig
 	now        func() time.Time
 	newID      func() (string, error)
 }
 
-// NewService returns a MySQL-backed lab session service.
-func NewService(repository *Repository, quota Quota) *Service {
-	return newService(repository, quota)
+// LifetimeConfig controls derived lab deadlines exposed in snapshots.
+type LifetimeConfig struct {
+	IdleTimeout time.Duration
+	MaxDuration time.Duration
 }
 
-func newService(repository createRepository, quota Quota) *Service {
+// DefaultLifetimeConfig returns the platform MVP lifecycle defaults.
+func DefaultLifetimeConfig() LifetimeConfig {
+	return LifetimeConfig{IdleTimeout: 10 * time.Minute, MaxDuration: 30 * time.Minute}
+}
+
+// NewService returns a MySQL-backed lab session service.
+func NewService(repository *Repository, quota Quota, lifetime ...LifetimeConfig) *Service {
+	return newService(repository, quota, lifetime...)
+}
+
+func newService(repository createRepository, quota Quota, lifetime ...LifetimeConfig) *Service {
+	config := DefaultLifetimeConfig()
+	if len(lifetime) > 0 {
+		config = lifetime[0]
+	}
 	return &Service{
 		repository: repository,
 		quota:      quota,
+		lifetime:   config,
 		now:        time.Now,
 		newID:      newLabID,
 	}
@@ -246,7 +265,8 @@ func (s *Service) Terminate(
 		return ActionResult{}, errors.New("lab repository does not support actions")
 	}
 	return repository.EnqueueAction(
-		ctx, userID, labID, operationID, "DESTROY_LAB", map[string]any{},
+		ctx, userID, labID, operationID, "DESTROY_LAB",
+		map[string]any{"reason": "user_requested"},
 		s.now().UTC().Truncate(time.Microsecond),
 	)
 }
@@ -260,7 +280,12 @@ func (s *Service) GetOwned(
 	if !validLabID(labID) || userID == 0 {
 		return Session{}, ErrNotFound
 	}
-	return s.repository.FindOwned(ctx, labID, userID)
+	session, err := s.repository.FindOwned(ctx, labID, userID)
+	if err != nil {
+		return Session{}, err
+	}
+	s.decorateDeadlines(&session)
+	return session, nil
 }
 
 // Snapshot returns a complete owned lab snapshot for page restoration.
@@ -276,5 +301,21 @@ func (s *Service) Snapshot(
 	if !ok {
 		return Snapshot{}, errors.New("lab repository does not support snapshots")
 	}
-	return repository.FindSnapshot(ctx, labID, userID)
+	snapshot, err := repository.FindSnapshot(ctx, labID, userID)
+	if err != nil {
+		return Snapshot{}, err
+	}
+	s.decorateDeadlines(&snapshot.Lab)
+	return snapshot, nil
+}
+
+func (s *Service) decorateDeadlines(session *Session) {
+	if session.StartedAt != nil {
+		value := session.StartedAt.UTC().Add(s.lifetime.MaxDuration)
+		session.MaximumExpiresAt = &value
+	}
+	if session.LastEffectiveActionAt != nil {
+		value := session.LastEffectiveActionAt.UTC().Add(s.lifetime.IdleTimeout)
+		session.IdleExpiresAt = &value
+	}
 }

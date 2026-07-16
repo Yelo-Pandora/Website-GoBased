@@ -19,6 +19,7 @@ import (
 
 	"website-gobased/internal/protocol"
 	"website-gobased/services/orchestrator/internal/dockerapi"
+	"website-gobased/services/orchestrator/internal/labdb"
 	"website-gobased/services/orchestrator/internal/nginx"
 	templates "website-gobased/services/orchestrator/internal/template"
 )
@@ -67,6 +68,7 @@ type databaseOperator interface {
 	Provision(ctx context.Context, databaseName, userName, password string) error
 	Reset(ctx context.Context, databaseName string) error
 	Destroy(ctx context.Context, databaseName, userName string) error
+	ListManaged(ctx context.Context) ([]labdb.ManagedDatabase, error)
 }
 
 type nginxOperator interface {
@@ -352,8 +354,13 @@ func (s *Service) resetLab(ctx context.Context, command protocol.Command) (any, 
 }
 
 func (s *Service) destroy(ctx context.Context, command protocol.Command) (any, *commandError) {
-	if err := decodeEmptyPayload(command.Payload); err != nil {
-		return nil, reject("INVALID_COMMAND", "destroy command does not accept parameters", err)
+	var payload destroyPayload
+	if err := decodePayload(command.Payload, &payload, false); err != nil {
+		return nil, reject("INVALID_COMMAND", "invalid destroy payload", err)
+	}
+	if payload.Reason != "" && payload.Reason != "user_requested" &&
+		payload.Reason != "idle_timeout" && payload.Reason != "maximum_duration" {
+		return nil, reject("INVALID_COMMAND", "destroy reason is invalid", nil)
 	}
 	names, err := s.basicNames(command.LabID)
 	if err != nil {
@@ -577,6 +584,10 @@ func (s *Service) reconcile(ctx context.Context, command protocol.Command) (any,
 	if err != nil {
 		return nil, fail("RECONCILIATION_FAILED", "managed resources could not be inspected", err)
 	}
+	databases, err := s.database.ListManaged(ctx)
+	if err != nil {
+		return nil, fail("RECONCILIATION_FAILED", "lab databases could not be inspected", err)
+	}
 	orphans := make([]string, 0)
 	for labID := range actual {
 		if !expected[labID] {
@@ -597,12 +608,58 @@ func (s *Service) reconcile(ctx context.Context, command protocol.Command) (any,
 			cleaned = append(cleaned, labID)
 		}
 	}
+	expectedDatabases := make(map[string]bool, len(expectedIDs))
+	for _, labID := range expectedIDs {
+		names, err := s.basicNames(labID)
+		if err != nil {
+			return nil, reject("INVALID_COMMAND", "expected lab identity is invalid", err)
+		}
+		expectedDatabases[names.database] = true
+	}
+	databaseOrphans := make([]labdb.ManagedDatabase, 0)
+	missingDatabases := make([]string, 0)
+	actualDatabases := make(map[string]bool, len(databases))
+	for _, database := range databases {
+		actualDatabases[database.DatabaseName] = true
+		if !expectedDatabases[database.DatabaseName] {
+			databaseOrphans = append(databaseOrphans, database)
+		}
+	}
+	for databaseName := range expectedDatabases {
+		if !actualDatabases[databaseName] {
+			missingDatabases = append(missingDatabases, databaseName)
+		}
+	}
+	sort.Slice(databaseOrphans, func(i, j int) bool {
+		return databaseOrphans[i].DatabaseName < databaseOrphans[j].DatabaseName
+	})
+	sort.Strings(missingDatabases)
+	cleanedDatabases := make([]string, 0)
+	if payload.Cleanup {
+		for _, database := range databaseOrphans {
+			if err := s.database.Destroy(ctx, database.DatabaseName, database.UserName); err != nil {
+				return nil, fail("RECONCILIATION_FAILED", "orphan lab database could not be removed", err)
+			}
+			cleanedDatabases = append(cleanedDatabases, database.DatabaseName)
+		}
+	}
 	return map[string]any{
 		"expectedLabIds":   expectedIDs,
 		"orphanLabIds":     orphans,
 		"cleanedLabIds":    cleaned,
+		"orphanDatabases":  databaseNames(databaseOrphans),
+		"missingDatabases": missingDatabases,
+		"cleanedDatabases": cleanedDatabases,
 		"cleanupRequested": payload.Cleanup,
 	}, nil
+}
+
+func databaseNames(values []labdb.ManagedDatabase) []string {
+	result := make([]string, 0, len(values))
+	for _, value := range values {
+		result = append(result, value.DatabaseName)
+	}
+	return result
 }
 
 func (s *Service) ensureApp(

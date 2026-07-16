@@ -325,7 +325,8 @@ func (r *Repository) CompleteDestroy(
 		}
 		labResult, err := tx.ExecContext(ctx, `
 			UPDATE lab_sessions
-			SET status = ?, terminated_at = ?, termination_reason = 'user_requested',
+			SET status = ?, terminated_at = ?,
+				termination_reason = COALESCE(termination_reason, 'user_requested'),
 				updated_at = ?
 			WHERE id = ? AND status = ?`,
 			lab.StatusTerminated,

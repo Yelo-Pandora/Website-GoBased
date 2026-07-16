@@ -59,6 +59,11 @@ func TestLoadConfigLabControlDefaults(t *testing.T) {
 	if cfg.LabOperationWorkerID != "platform-api-test" {
 		t.Fatalf("LabOperationWorkerID = %q", cfg.LabOperationWorkerID)
 	}
+	if cfg.LabIdleTimeout != 10*time.Minute || cfg.LabMaxDuration != 30*time.Minute ||
+		cfg.LabExpiringLead != time.Minute || cfg.LabLifecyclePoll != 5*time.Second ||
+		cfg.LabReconcileInterval != time.Minute || !cfg.LabReconcileCleanup {
+		t.Fatalf("lifecycle config = %#v", cfg)
+	}
 }
 
 func TestLoadConfigRejectsInvalidLabControlConfig(t *testing.T) {
@@ -73,6 +78,12 @@ func TestLoadConfigRejectsInvalidLabControlConfig(t *testing.T) {
 		{name: "worker id", key: "LAB_OPERATION_WORKER_ID", value: "bad worker"},
 		{name: "poll interval", key: "LAB_OPERATION_POLL_INTERVAL", value: "0s"},
 		{name: "lease duration", key: "LAB_OPERATION_LEASE_DURATION", value: "10s"},
+		{name: "idle timeout", key: "LAB_IDLE_TIMEOUT", value: "0s"},
+		{name: "maximum duration", key: "LAB_MAX_DURATION", value: "0s"},
+		{name: "expiring lead", key: "LAB_EXPIRING_LEAD", value: "10m"},
+		{name: "lifecycle poll", key: "LAB_LIFECYCLE_POLL_INTERVAL", value: "0s"},
+		{name: "reconcile interval", key: "LAB_RECONCILE_INTERVAL", value: "0s"},
+		{name: "reconcile cleanup", key: "LAB_RECONCILE_CLEANUP", value: "sometimes"},
 	}
 
 	for _, test := range tests {

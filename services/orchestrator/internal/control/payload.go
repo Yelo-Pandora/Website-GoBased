@@ -14,6 +14,10 @@ type scenarioPayload struct {
 	ScenarioTemplateID string `json:"scenarioTemplateId"`
 }
 
+type destroyPayload struct {
+	Reason string `json:"reason,omitempty"`
+}
+
 type createAppPayload struct {
 	ScenarioTemplateID string `json:"scenarioTemplateId"`
 	InstanceName       string `json:"instanceName"`

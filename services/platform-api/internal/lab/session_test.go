@@ -160,6 +160,31 @@ func TestServiceSnapshotHidesInvalidIdentityAsNotFound(t *testing.T) {
 	}
 }
 
+func TestServiceSnapshotDerivesLifecycleDeadlines(t *testing.T) {
+	t.Parallel()
+
+	startedAt := time.Date(2026, time.July, 16, 12, 0, 0, 0, time.UTC)
+	lastActionAt := startedAt.Add(2 * time.Minute)
+	repository := &actionRepositoryStub{snapshot: Snapshot{Lab: Session{
+		ID: "lab-test1234", StartedAt: &startedAt, LastEffectiveActionAt: &lastActionAt,
+	}}}
+	service := newService(repository, Quota{
+		MaxActiveLabs: 10, MaxTemporaryContainers: 40, MaxInstancesPerLab: 4,
+	}, LifetimeConfig{IdleTimeout: 10 * time.Minute, MaxDuration: 30 * time.Minute})
+	snapshot, err := service.Snapshot(context.Background(), "lab-test1234", 7)
+	if err != nil {
+		t.Fatalf("Snapshot() error = %v", err)
+	}
+	if snapshot.Lab.IdleExpiresAt == nil ||
+		!snapshot.Lab.IdleExpiresAt.Equal(lastActionAt.Add(10*time.Minute)) {
+		t.Fatalf("IdleExpiresAt = %v", snapshot.Lab.IdleExpiresAt)
+	}
+	if snapshot.Lab.MaximumExpiresAt == nil ||
+		!snapshot.Lab.MaximumExpiresAt.Equal(startedAt.Add(30*time.Minute)) {
+		t.Fatalf("MaximumExpiresAt = %v", snapshot.Lab.MaximumExpiresAt)
+	}
+}
+
 func TestScenarioForCourse(t *testing.T) {
 	t.Parallel()
 

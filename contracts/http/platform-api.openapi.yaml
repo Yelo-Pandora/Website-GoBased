@@ -642,6 +642,8 @@ components:
         - redisEnabled
         - startedAt
         - lastEffectiveActionAt
+        - idleExpiresAt
+        - maximumExpiresAt
         - terminatedAt
         - terminationReason
         - createdAt
@@ -670,6 +672,16 @@ components:
               format: date-time
             - type: "null"
         lastEffectiveActionAt:
+          oneOf:
+            - type: string
+              format: date-time
+            - type: "null"
+        idleExpiresAt:
+          oneOf:
+            - type: string
+              format: date-time
+            - type: "null"
+        maximumExpiresAt:
           oneOf:
             - type: string
               format: date-time

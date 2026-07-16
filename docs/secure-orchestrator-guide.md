@@ -31,6 +31,8 @@ Nginx 片段。
 当前场景模板包括 `application_data_separation_scenario_v1`、
 `application_cluster_scenario_v1`、`multi_level_cache_scenario_v1` 和
 `cache_failures_scenario_v1`；后两个场景额外引用实验 Redis 模板。
+阶段六的数据库核对使用 `platform.list_lab_database_resources` 存储过程，
+由数据库迁移脚本创建，编排器账号只获得数据库级 `EXECUTE` 权限。
 
 容器模板固定以下内容：
 

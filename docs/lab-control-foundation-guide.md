@@ -117,3 +117,6 @@ lab_sessions.status = Failed
 Nginx 配置管理、补偿和资源核对。
 阶段五已经开放实验创建、快照、重置和主动结束接口，形成应用与数据分离实验的第一条端到端闭环。
 下一阶段补充空闲/最长时限回收、重启恢复和周期性资源核对；商品批次处理归入阶段七。
+
+阶段六快照中的 `idleExpiresAt` 和 `maximumExpiresAt` 由 `started_at` 与
+`last_effective_action_at` 按平台配置推导，不重复写入数据库。

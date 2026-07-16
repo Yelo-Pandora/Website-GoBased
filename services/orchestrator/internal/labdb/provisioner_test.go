@@ -1,6 +1,13 @@
 package labdb
 
-import "testing"
+import (
+	"context"
+	"database/sql"
+	"os"
+	"testing"
+
+	_ "github.com/go-sql-driver/mysql"
+)
 
 func TestValidDatabaseIdentity(t *testing.T) {
 	tests := []struct {
@@ -22,5 +29,26 @@ func TestValidDatabaseIdentity(t *testing.T) {
 				t.Fatalf("validate(%q) = %t; want %t", test.value, got, test.want)
 			}
 		})
+	}
+}
+
+func TestListManagedIntegration(t *testing.T) {
+	dsn := os.Getenv("ORCHESTRATOR_TEST_DSN")
+	if dsn == "" {
+		t.Skip("ORCHESTRATOR_TEST_DSN is not set")
+	}
+	database, err := sql.Open("mysql", dsn)
+	if err != nil {
+		t.Fatalf("sql.Open() error = %v", err)
+	}
+	defer database.Close()
+	values, err := NewProvisioner(database).ListManaged(context.Background())
+	if err != nil {
+		t.Fatalf("ListManaged() error = %v", err)
+	}
+	for _, value := range values {
+		if !validDatabaseName(value.DatabaseName) || !validUserName(value.UserName) {
+			t.Fatalf("invalid managed database = %#v", value)
+		}
 	}
 }

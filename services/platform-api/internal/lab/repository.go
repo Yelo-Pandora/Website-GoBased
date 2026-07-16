@@ -332,6 +332,14 @@ func (r *Repository) EnqueueAction(
 		session.Status != StatusFailed {
 		return ActionResult{}, ErrNotRunning
 	}
+	terminationReason := "user_requested"
+	if action == destroyLabAction {
+		if value, ok := payload.(map[string]any); ok {
+			if candidate, ok := value["reason"].(string); ok && validTerminationReason(candidate) {
+				terminationReason = candidate
+			}
+		}
+	}
 	var pendingID uint64
 	if err := tx.QueryRowContext(ctx, `
 		SELECT id
@@ -350,9 +358,10 @@ func (r *Repository) EnqueueAction(
 	if action == destroyLabAction {
 		result, err := tx.ExecContext(ctx, `
 			UPDATE lab_sessions
-			SET status = ?, updated_at = ?
+			SET status = ?, termination_reason = ?, updated_at = ?
 			WHERE id = ? AND status IN (?, ?, ?, ?)`,
 			StatusTerminating,
+			terminationReason,
 			now,
 			labID,
 			StatusPreparing,
@@ -841,6 +850,15 @@ func applyNullableSessionFields(
 	if terminationReason.Valid {
 		value := terminationReason.String
 		session.TerminationReason = &value
+	}
+}
+
+func validTerminationReason(value string) bool {
+	switch value {
+	case "user_requested", "idle_timeout", "maximum_duration":
+		return true
+	default:
+		return false
 	}
 }
 
