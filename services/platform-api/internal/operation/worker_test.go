@@ -17,6 +17,7 @@ type queueStub struct {
 	markedRunning   bool
 	completedCode   string
 	completedResult any
+	completedAction string
 }
 
 func (s *queueStub) Claim(
@@ -46,6 +47,34 @@ func (s *queueStub) MarkRunning(
 func (s *queueStub) CompleteProvision(
 	_ context.Context,
 	_ Record,
+	resultValue ProvisionResult,
+	errorCode string,
+	_ string,
+	_ time.Time,
+) error {
+	s.completedCode = errorCode
+	s.completedResult = resultValue
+	s.completedAction = ActionCreateLab
+	return nil
+}
+
+func (s *queueStub) CompleteReset(
+	_ context.Context,
+	_ Record,
+	resultValue ProvisionResult,
+	errorCode string,
+	_ string,
+	_ time.Time,
+) error {
+	s.completedCode = errorCode
+	s.completedResult = resultValue
+	s.completedAction = ActionResetLab
+	return nil
+}
+
+func (s *queueStub) CompleteDestroy(
+	_ context.Context,
+	_ Record,
 	resultValue any,
 	errorCode string,
 	_ string,
@@ -53,6 +82,7 @@ func (s *queueStub) CompleteProvision(
 ) error {
 	s.completedCode = errorCode
 	s.completedResult = resultValue
+	s.completedAction = ActionDestroyLab
 	return nil
 }
 
@@ -90,13 +120,27 @@ func TestWorkerProcessesCreateLab(t *testing.T) {
 		LabID:       "lab-test",
 		RequestedBy: 7,
 		Action:      ActionCreateLab,
-		Payload:     json.RawMessage(`{"courseId":3}`),
+		Payload: json.RawMessage(`{
+			"courseId":3,
+			"scenarioTemplateId":"scenario-1"
+		}`),
 	}}
 	executor := &executorStub{response: protocol.CommandResponse{
 		CommandID:   "command-1",
 		OperationID: "operation-1",
 		Status:      "succeeded",
-		Result:      map[string]any{"created": true},
+		Result: map[string]any{
+			"labId": "lab-test", "scenarioTemplateId": "scenario-1",
+			"databaseName": "lab_test", "databaseUser": "lab_test_user",
+			"networkId": "network-1", "networkName": "lab-test-net",
+			"instances": []map[string]any{{
+				"instanceName": "app-1", "containerId": "container-1",
+				"containerName": "lab-test-app-1", "status": "running",
+				"cpuLimitCores": 0.1, "memoryLimitMb": 128,
+				"performancePercent": 100, "effectiveCapacity": 100,
+				"currentWeight": 100,
+			}},
+		},
 	}}
 	worker, err := newWorker(
 		slog.New(slog.NewTextHandler(io.Discard, nil)),
@@ -117,12 +161,76 @@ func TestWorkerProcessesCreateLab(t *testing.T) {
 	if err != nil {
 		t.Fatalf("processOne() error = %v", err)
 	}
-	if !processed || !queue.markedRunning || queue.completedCode != "" {
+	if !processed || !queue.markedRunning || queue.completedCode != "" ||
+		queue.completedAction != ActionCreateLab {
 		t.Fatalf("worker state: processed=%t queue=%#v", processed, queue)
 	}
 	if executor.command.CommandType != "PROVISION_LAB" ||
 		executor.command.RequestedBy != "7" {
 		t.Fatalf("command = %#v", executor.command)
+	}
+}
+
+func TestWorkerMapsResetAndDestroyCommands(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name        string
+		action      string
+		commandType string
+		result      any
+	}{
+		{
+			name: "reset", action: ActionResetLab, commandType: "RESET_LAB",
+			result: map[string]any{
+				"labId": "lab-test", "scenarioTemplateId": "scenario-1",
+				"databaseName": "lab_test", "databaseUser": "lab_test_user",
+				"networkId": "network-1", "networkName": "lab-test-net",
+				"instances": []map[string]any{{
+					"instanceName": "app-1", "containerId": "container-1",
+					"containerName": "lab-test-app-1", "cpuLimitCores": 0.1,
+					"memoryLimitMb":      128,
+					"performancePercent": 100, "effectiveCapacity": 100,
+					"currentWeight": 100,
+				}},
+			},
+		},
+		{
+			name: "destroy", action: ActionDestroyLab, commandType: "DESTROY_LAB",
+			result: map[string]any{"destroyed": true},
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			queue := &queueStub{record: Record{
+				ID: 3, OperationID: "operation-1", LabID: "lab-test",
+				RequestedBy: 7, Action: test.action,
+				Payload: json.RawMessage(`{"scenarioTemplateId":"scenario-1"}`),
+			}}
+			executor := &executorStub{response: protocol.CommandResponse{
+				Status: "succeeded", Result: test.result,
+			}}
+			worker, err := newWorker(
+				slog.New(slog.NewTextHandler(io.Discard, nil)),
+				queue,
+				executor,
+				WorkerConfig{
+					Owner: "worker-1", PollInterval: time.Second,
+					LeaseDuration: time.Minute, CommandTimeout: 10 * time.Second,
+				},
+			)
+			if err != nil {
+				t.Fatalf("newWorker() error = %v", err)
+			}
+			worker.newCommandID = func() (string, error) { return "command-1", nil }
+			if _, err := worker.processOne(context.Background()); err != nil {
+				t.Fatalf("processOne() error = %v", err)
+			}
+			if executor.command.CommandType != test.commandType ||
+				queue.completedAction != test.action || queue.completedCode != "" {
+				t.Fatalf("command=%#v queue=%#v", executor.command, queue)
+			}
+		})
 	}
 }
 

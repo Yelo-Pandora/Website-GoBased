@@ -22,8 +22,42 @@ const (
 	StatusFailed       = "failed"
 	StatusCompensating = "compensating"
 
-	ActionCreateLab = "CREATE_LAB"
+	ActionCreateLab  = "CREATE_LAB"
+	ActionResetLab   = "RESET_LAB"
+	ActionDestroyLab = "DESTROY_LAB"
 )
+
+// ProvisionResult is the validated resource result returned by the orchestrator.
+type ProvisionResult struct {
+	LabID              string              `json:"labId"`
+	ScenarioTemplateID string              `json:"scenarioTemplateId"`
+	DatabaseName       string              `json:"databaseName"`
+	DatabaseUser       string              `json:"databaseUser"`
+	NetworkID          string              `json:"networkId"`
+	NetworkName        string              `json:"networkName"`
+	Instances          []ProvisionInstance `json:"instances"`
+	Redis              *ProvisionRedis     `json:"redis"`
+}
+
+// ProvisionInstance is one application server created for a lab.
+type ProvisionInstance struct {
+	InstanceName       string  `json:"instanceName"`
+	ContainerID        string  `json:"containerId"`
+	ContainerName      string  `json:"containerName"`
+	Status             string  `json:"status"`
+	CPULimitCores      float64 `json:"cpuLimitCores"`
+	MemoryLimitMB      int     `json:"memoryLimitMb"`
+	PerformancePercent int     `json:"performancePercent"`
+	EffectiveCapacity  int     `json:"effectiveCapacity"`
+	CurrentWeight      int     `json:"currentWeight"`
+}
+
+// ProvisionRedis is the optional per-lab Redis container.
+type ProvisionRedis struct {
+	ContainerID   string `json:"containerId"`
+	ContainerName string `json:"containerName"`
+	Status        string `json:"status"`
+}
 
 // Record is one claimed persistent operation.
 type Record struct {

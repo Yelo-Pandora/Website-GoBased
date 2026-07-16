@@ -13,6 +13,8 @@ import (
 
 const (
 	createLabAction                   = "CREATE_LAB"
+	resetLabAction                    = "RESET_LAB"
+	destroyLabAction                  = "DESTROY_LAB"
 	globalAdmissionLockName           = "platform:global-admission"
 	globalAdmissionLockTimeoutSeconds = 5
 	globalAdmissionReleaseTimeout     = 5 * time.Second
@@ -262,6 +264,365 @@ func (r *Repository) FindOwned(
 	return session, nil
 }
 
+// EnqueueAction persists one serialized reset or destroy operation.
+func (r *Repository) EnqueueAction(
+	ctx context.Context,
+	userID uint64,
+	labID string,
+	operationID string,
+	action string,
+	payload any,
+	now time.Time,
+) (ActionResult, error) {
+	connection, err := r.database.Conn(ctx)
+	if err != nil {
+		return ActionResult{}, fmt.Errorf("reserve lab action connection: %w", err)
+	}
+	defer connection.Close()
+	tx, err := connection.BeginTx(ctx, &sql.TxOptions{Isolation: sql.LevelReadCommitted})
+	if err != nil {
+		return ActionResult{}, fmt.Errorf("begin lab action transaction: %w", err)
+	}
+	defer tx.Rollback()
+
+	existing, err := findActionByOperationID(ctx, tx, operationID)
+	if err == nil {
+		return matchingActionResult(existing, userID, labID, action)
+	}
+	if !errors.Is(err, sql.ErrNoRows) {
+		return ActionResult{}, fmt.Errorf("find existing lab action: %w", err)
+	}
+
+	session, err := scanSession(tx.QueryRowContext(ctx, `
+		SELECT
+			id, user_id, course_id, scenario_type, scenario_template_id,
+			status, balancing_mode, redis_enabled, started_at,
+			last_effective_action_at, terminated_at, termination_reason,
+			created_at, updated_at
+		FROM lab_sessions
+		WHERE id = ?
+		FOR UPDATE`, labID))
+	if errors.Is(err, sql.ErrNoRows) {
+		return ActionResult{}, ErrNotFound
+	}
+	if err != nil {
+		return ActionResult{}, fmt.Errorf("lock lab action session: %w", err)
+	}
+	if session.UserID != userID {
+		return ActionResult{}, ErrNotOwned
+	}
+	existing, err = findActionByOperationID(ctx, tx, operationID)
+	if err == nil {
+		return matchingActionResult(existing, userID, labID, action)
+	}
+	if !errors.Is(err, sql.ErrNoRows) {
+		return ActionResult{}, fmt.Errorf("recheck existing lab action: %w", err)
+	}
+	if action != resetLabAction && action != destroyLabAction {
+		return ActionResult{}, ErrInvalidRequest
+	}
+	if action == resetLabAction {
+		if session.Status != StatusRunning && session.Status != StatusExpiring {
+			return ActionResult{}, ErrNotRunning
+		}
+		payload = map[string]any{"scenarioTemplateId": session.ScenarioTemplateID}
+	} else if session.Status != StatusPreparing &&
+		session.Status != StatusRunning &&
+		session.Status != StatusExpiring &&
+		session.Status != StatusFailed {
+		return ActionResult{}, ErrNotRunning
+	}
+	var pendingID uint64
+	if err := tx.QueryRowContext(ctx, `
+		SELECT id
+		FROM lab_operations
+		WHERE lab_id = ?
+		  AND status IN ('pending', 'claimed', 'running', 'compensating')
+		LIMIT 1`, labID).Scan(&pendingID); err == nil {
+		return ActionResult{}, ErrBusy
+	} else if !errors.Is(err, sql.ErrNoRows) {
+		return ActionResult{}, fmt.Errorf("check lab action queue: %w", err)
+	}
+	payloadJSON, err := json.Marshal(payload)
+	if err != nil {
+		return ActionResult{}, fmt.Errorf("encode lab action payload: %w", err)
+	}
+	if action == destroyLabAction {
+		result, err := tx.ExecContext(ctx, `
+			UPDATE lab_sessions
+			SET status = ?, updated_at = ?
+			WHERE id = ? AND status IN (?, ?, ?, ?)`,
+			StatusTerminating,
+			now,
+			labID,
+			StatusPreparing,
+			StatusRunning,
+			StatusExpiring,
+			StatusFailed,
+		)
+		if err != nil {
+			return ActionResult{}, fmt.Errorf("mark lab terminating: %w", err)
+		}
+		if err := requireSingleRow(result); err != nil {
+			return ActionResult{}, ErrStateConflict
+		}
+	}
+	result, err := tx.ExecContext(ctx, `
+		INSERT INTO lab_operations (
+			operation_id, lab_id, requested_by, action, status,
+			payload_json, created_at, updated_at
+		) VALUES (?, ?, ?, ?, 'pending', ?, ?, ?)`,
+		operationID,
+		labID,
+		userID,
+		action,
+		payloadJSON,
+		now,
+		now,
+	)
+	if err != nil {
+		if duplicateKey(err) {
+			return ActionResult{}, ErrOperationConflict
+		}
+		return ActionResult{}, fmt.Errorf("insert lab action: %w", err)
+	}
+	operationDatabaseID, err := result.LastInsertId()
+	if err != nil {
+		return ActionResult{}, fmt.Errorf("read lab action id: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return ActionResult{}, fmt.Errorf("commit lab action: %w", err)
+	}
+	return ActionResult{Operation: CreatedOperation{
+		ID:          uint64(operationDatabaseID),
+		OperationID: operationID,
+		LabID:       labID,
+		RequestedBy: userID,
+		Action:      action,
+		Status:      "pending",
+		SubmittedAt: now,
+	}}, nil
+}
+
+// FindSnapshot returns the complete persisted state for an owned lab.
+func (r *Repository) FindSnapshot(
+	ctx context.Context,
+	labID string,
+	userID uint64,
+) (Snapshot, error) {
+	tx, err := r.database.BeginTx(ctx, &sql.TxOptions{
+		Isolation: sql.LevelRepeatableRead,
+		ReadOnly:  true,
+	})
+	if err != nil {
+		return Snapshot{}, fmt.Errorf("begin lab snapshot transaction: %w", err)
+	}
+	defer tx.Rollback()
+	session, err := scanSession(tx.QueryRowContext(ctx, `
+		SELECT
+			id, user_id, course_id, scenario_type, scenario_template_id,
+			status, balancing_mode, redis_enabled, started_at,
+			last_effective_action_at, terminated_at, termination_reason,
+			created_at, updated_at
+		FROM lab_sessions
+		WHERE id = ?`, labID))
+	if errors.Is(err, sql.ErrNoRows) {
+		return Snapshot{}, ErrNotFound
+	}
+	if err != nil {
+		return Snapshot{}, fmt.Errorf("load lab snapshot session: %w", err)
+	}
+	if session.UserID != userID {
+		return Snapshot{}, ErrNotOwned
+	}
+	snapshot := Snapshot{
+		Lab:       session,
+		Resources: []Resource{},
+		Topology:  Topology{Instances: []Instance{}},
+	}
+	rows, err := tx.QueryContext(ctx, `
+		SELECT instance_name, container_id, status, cpu_limit_cores,
+			memory_limit_mb, performance_percent, effective_capacity, current_weight
+		FROM lab_instances
+		WHERE lab_id = ?
+		ORDER BY instance_name`, labID)
+	if err != nil {
+		return Snapshot{}, fmt.Errorf("load lab instances: %w", err)
+	}
+	for rows.Next() {
+		var instance Instance
+		var containerID sql.NullString
+		if err := rows.Scan(
+			&instance.Name,
+			&containerID,
+			&instance.Status,
+			&instance.CPULimitCores,
+			&instance.MemoryLimitMB,
+			&instance.PerformancePercent,
+			&instance.EffectiveCapacity,
+			&instance.CurrentWeight,
+		); err != nil {
+			rows.Close()
+			return Snapshot{}, fmt.Errorf("scan lab instance: %w", err)
+		}
+		instance.ID = instance.Name
+		if containerID.Valid {
+			instance.ContainerID = containerID.String
+		}
+		snapshot.Topology.Instances = append(snapshot.Topology.Instances, instance)
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return Snapshot{}, fmt.Errorf("iterate lab instances: %w", err)
+	}
+	rows.Close()
+
+	resourceRows, err := tx.QueryContext(ctx, `
+		SELECT resource_type, resource_name, external_id, status, metadata_json
+		FROM lab_resources
+		WHERE lab_id = ?
+		ORDER BY resource_type, resource_name`, labID)
+	if err != nil {
+		return Snapshot{}, fmt.Errorf("load lab resources: %w", err)
+	}
+	for resourceRows.Next() {
+		var resource Resource
+		var externalID sql.NullString
+		var metadata []byte
+		if err := resourceRows.Scan(
+			&resource.Type,
+			&resource.Name,
+			&externalID,
+			&resource.Status,
+			&metadata,
+		); err != nil {
+			resourceRows.Close()
+			return Snapshot{}, fmt.Errorf("scan lab resource: %w", err)
+		}
+		if externalID.Valid {
+			resource.ExternalID = externalID.String
+		}
+		if len(metadata) > 0 {
+			if err := json.Unmarshal(metadata, &resource.Metadata); err != nil {
+				resourceRows.Close()
+				return Snapshot{}, fmt.Errorf("decode lab resource metadata: %w", err)
+			}
+		}
+		snapshot.Resources = append(snapshot.Resources, resource)
+		if resource.Type == "session-redis" {
+			snapshot.Topology.Redis = &ResourceStatus{Status: resource.Status}
+		}
+		if resource.Type == "nginx-fragment" {
+			snapshot.Topology.Gateway.Status = resource.Status
+		}
+	}
+	if err := resourceRows.Err(); err != nil {
+		resourceRows.Close()
+		return Snapshot{}, fmt.Errorf("iterate lab resources: %w", err)
+	}
+	resourceRows.Close()
+	if snapshot.Topology.Gateway.Status == "" {
+		snapshot.Topology.Gateway.Status = "unknown"
+	}
+
+	var operation OperationSnapshot
+	var targetInstanceID sql.NullString
+	var completedAt sql.NullTime
+	var errorCode sql.NullString
+	var errorMessage sql.NullString
+	err = tx.QueryRowContext(ctx, `
+		SELECT operation_id, action, target_instance_id, status, created_at,
+			completed_at, error_code, error_message
+		FROM lab_operations
+		WHERE lab_id = ?
+		ORDER BY created_at DESC, id DESC
+		LIMIT 1`, labID).Scan(
+		&operation.OperationID,
+		&operation.Action,
+		&targetInstanceID,
+		&operation.Status,
+		&operation.SubmittedAt,
+		&completedAt,
+		&errorCode,
+		&errorMessage,
+	)
+	if errors.Is(err, sql.ErrNoRows) {
+		if err := tx.Commit(); err != nil {
+			return Snapshot{}, fmt.Errorf("commit lab snapshot: %w", err)
+		}
+		return snapshot, nil
+	}
+	if err != nil {
+		return Snapshot{}, fmt.Errorf("load latest lab operation: %w", err)
+	}
+	if targetInstanceID.Valid {
+		value := targetInstanceID.String
+		operation.TargetInstanceID = &value
+	}
+	if completedAt.Valid {
+		value := completedAt.Time.UTC()
+		operation.CompletedAt = &value
+	}
+	if errorCode.Valid || errorMessage.Valid {
+		snapshotError := OperationError{Code: errorCode.String, Message: errorMessage.String}
+		operation.Error = &snapshotError
+	}
+	snapshot.LatestOperation = &operation
+	if err := tx.Commit(); err != nil {
+		return Snapshot{}, fmt.Errorf("commit lab snapshot: %w", err)
+	}
+	return snapshot, nil
+}
+
+func findActionByOperationID(
+	ctx context.Context,
+	tx *sql.Tx,
+	operationID string,
+) (CreatedOperation, error) {
+	var operation CreatedOperation
+	var targetInstanceID sql.NullString
+	var completedAt sql.NullTime
+	err := tx.QueryRowContext(ctx, `
+		SELECT id, operation_id, lab_id, requested_by, action,
+			target_instance_id, status, created_at, completed_at
+		FROM lab_operations
+		WHERE operation_id = ?`, operationID).Scan(
+		&operation.ID,
+		&operation.OperationID,
+		&operation.LabID,
+		&operation.RequestedBy,
+		&operation.Action,
+		&targetInstanceID,
+		&operation.Status,
+		&operation.SubmittedAt,
+		&completedAt,
+	)
+	if err != nil {
+		return CreatedOperation{}, err
+	}
+	if targetInstanceID.Valid {
+		value := targetInstanceID.String
+		operation.TargetInstanceID = &value
+	}
+	if completedAt.Valid {
+		value := completedAt.Time.UTC()
+		operation.CompletedAt = &value
+	}
+	return operation, nil
+}
+
+func matchingActionResult(
+	operation CreatedOperation,
+	userID uint64,
+	labID string,
+	action string,
+) (ActionResult, error) {
+	if operation.LabID != labID || operation.RequestedBy != userID || operation.Action != action {
+		return ActionResult{}, ErrOperationConflict
+	}
+	return ActionResult{Operation: operation, Existing: true}, nil
+}
+
 func findExistingCreate(
 	ctx context.Context,
 	tx *sql.Tx,
@@ -486,4 +847,15 @@ func applyNullableSessionFields(
 func duplicateKey(err error) bool {
 	var mysqlError *mysql.MySQLError
 	return errors.As(err, &mysqlError) && mysqlError.Number == 1062
+}
+
+func requireSingleRow(result sql.Result) error {
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("read affected lab rows: %w", err)
+	}
+	if rowsAffected != 1 {
+		return ErrStateConflict
+	}
+	return nil
 }

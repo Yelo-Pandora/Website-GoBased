@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -27,6 +28,22 @@ type queue interface {
 		leaseExpires time.Time,
 	) error
 	CompleteProvision(
+		ctx context.Context,
+		record Record,
+		resultValue ProvisionResult,
+		errorCode string,
+		errorMessage string,
+		now time.Time,
+	) error
+	CompleteReset(
+		ctx context.Context,
+		record Record,
+		resultValue ProvisionResult,
+		errorCode string,
+		errorMessage string,
+		now time.Time,
+	) error
+	CompleteDestroy(
 		ctx context.Context,
 		record Record,
 		resultValue any,
@@ -149,7 +166,8 @@ func (w *Worker) processOne(ctx context.Context) (bool, error) {
 	); err != nil {
 		return true, err
 	}
-	if record.Action != ActionCreateLab {
+	commandType, ok := commandTypeForAction(record.Action)
+	if !ok {
 		return true, w.queue.CompleteFailure(
 			ctx,
 			record,
@@ -163,7 +181,7 @@ func (w *Worker) processOne(ctx context.Context) (bool, error) {
 		return true, w.completeFailure(ctx, record, "INTERNAL_ERROR", err.Error())
 	}
 	command := protocol.Command{
-		CommandType: "PROVISION_LAB",
+		CommandType: commandType,
 		CommandID:   commandID,
 		OperationID: record.OperationID,
 		LabID:       record.LabID,
@@ -183,14 +201,7 @@ func (w *Worker) processOne(ctx context.Context) (bool, error) {
 	}
 	switch response.Status {
 	case "succeeded":
-		return true, w.queue.CompleteProvision(
-			ctx,
-			record,
-			response.Result,
-			"",
-			"",
-			w.now().UTC().Truncate(time.Microsecond),
-		)
+		return true, w.completeSuccess(ctx, record, response.Result)
 	case "failed", "rejected":
 		code, message := commandError(response.Error)
 		return true, w.completeFailure(ctx, record, code, message)
@@ -210,14 +221,109 @@ func (w *Worker) completeFailure(
 	code string,
 	message string,
 ) error {
-	return w.queue.CompleteProvision(
-		ctx,
-		record,
-		nil,
-		code,
-		message,
-		w.now().UTC().Truncate(time.Microsecond),
-	)
+	now := w.now().UTC().Truncate(time.Microsecond)
+	switch record.Action {
+	case ActionCreateLab:
+		return w.queue.CompleteProvision(ctx, record, ProvisionResult{}, code, message, now)
+	case ActionResetLab:
+		return w.queue.CompleteReset(ctx, record, ProvisionResult{}, code, message, now)
+	case ActionDestroyLab:
+		return w.queue.CompleteDestroy(ctx, record, nil, code, message, now)
+	default:
+		return w.queue.CompleteFailure(ctx, record, code, message, now)
+	}
+}
+
+func (w *Worker) completeSuccess(
+	ctx context.Context,
+	record Record,
+	result any,
+) error {
+	now := w.now().UTC().Truncate(time.Microsecond)
+	switch record.Action {
+	case ActionCreateLab, ActionResetLab:
+		provision, err := decodeProvisionResult(result)
+		if err == nil {
+			err = validateProvisionIdentity(record, provision)
+		}
+		if err != nil {
+			return w.completeFailure(
+				ctx,
+				record,
+				"ORCHESTRATOR_RESPONSE_INCOMPLETE",
+				"orchestrator provision result is invalid",
+			)
+		}
+		if record.Action == ActionCreateLab {
+			return w.queue.CompleteProvision(ctx, record, provision, "", "", now)
+		}
+		return w.queue.CompleteReset(ctx, record, provision, "", "", now)
+	case ActionDestroyLab:
+		return w.queue.CompleteDestroy(ctx, record, result, "", "", now)
+	default:
+		return w.queue.CompleteFailure(
+			ctx,
+			record,
+			"ACTION_NOT_SUPPORTED",
+			"operation action is not supported by this worker",
+			now,
+		)
+	}
+}
+
+func commandTypeForAction(action string) (string, bool) {
+	switch action {
+	case ActionCreateLab:
+		return "PROVISION_LAB", true
+	case ActionResetLab:
+		return "RESET_LAB", true
+	case ActionDestroyLab:
+		return "DESTROY_LAB", true
+	default:
+		return "", false
+	}
+}
+
+func decodeProvisionResult(value any) (ProvisionResult, error) {
+	encoded, err := json.Marshal(value)
+	if err != nil {
+		return ProvisionResult{}, err
+	}
+	var result ProvisionResult
+	if err := json.Unmarshal(encoded, &result); err != nil {
+		return ProvisionResult{}, err
+	}
+	if result.LabID == "" || result.DatabaseName == "" ||
+		result.DatabaseUser == "" || result.NetworkID == "" ||
+		result.NetworkName == "" || len(result.Instances) == 0 {
+		return ProvisionResult{}, errors.New("provision result is incomplete")
+	}
+	for _, instance := range result.Instances {
+		if instance.InstanceName == "" || instance.ContainerID == "" ||
+			instance.ContainerName == "" || instance.CPULimitCores <= 0 ||
+			instance.MemoryLimitMB <= 0 || instance.PerformancePercent <= 0 ||
+			instance.EffectiveCapacity < 0 || instance.CurrentWeight <= 0 {
+			return ProvisionResult{}, errors.New("provision instance result is incomplete")
+		}
+	}
+	return result, nil
+}
+
+func validateProvisionIdentity(record Record, result ProvisionResult) error {
+	if result.LabID != record.LabID {
+		return errors.New("provision result lab id does not match")
+	}
+	var payload struct {
+		ScenarioTemplateID string `json:"scenarioTemplateId"`
+	}
+	if err := json.Unmarshal(record.Payload, &payload); err != nil {
+		return err
+	}
+	if payload.ScenarioTemplateID == "" ||
+		result.ScenarioTemplateID != payload.ScenarioTemplateID {
+		return errors.New("provision result scenario template does not match")
+	}
+	return nil
 }
 
 func newCommandID() (string, error) {

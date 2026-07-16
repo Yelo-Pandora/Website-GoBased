@@ -12,6 +12,8 @@ func TestValidDatabaseIdentity(t *testing.T) {
 		{name: "database", value: "lab_a81f", validate: validDatabaseName, want: true},
 		{name: "database injection", value: "lab_a81f`; DROP DATABASE platform", validate: validDatabaseName},
 		{name: "user", value: "lab_a81f_user", validate: validUserName, want: true},
+		{name: "user max length", value: "lab_12345678901234567890123_user", validate: validUserName, want: true},
+		{name: "user too long", value: "lab_123456789012345678901234_user", validate: validUserName},
 		{name: "user suffix", value: "lab_a81f_admin", validate: validUserName},
 	}
 	for _, test := range tests {

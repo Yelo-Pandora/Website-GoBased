@@ -58,8 +58,8 @@
 `RECONCILE_RESOURCES` 命令载荷显式携带 `expectedLabIds`。
 编排器只负责比较调用方提供的期望集合与其可观察的 Docker、Nginx 资源。
 
-在阶段五将编排结果写入 `lab_resources` 之前，
-不实现数据库单独遗留时的孤儿枚举。
+阶段五已将编排结果写入 `lab_resources`；数据库单独遗留时的孤儿枚举仍不在本阶段实现，
+后续资源核对任务可直接以该表作为期望资源事实源。
 已知实验的显式销毁和创建失败补偿仍按确定性名称删除数据库及账号。
 
 ## 6. HTTP 框架审计
@@ -85,4 +85,3 @@
 - `docker compose config --quiet`。
 - 搜索确认额外表、已删除过程和旧 Go 接口没有残留。
 - 检查所有生产 HTTP Handler 仍以 `*gin.Context` 为入口。
-

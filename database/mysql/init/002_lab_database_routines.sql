@@ -17,7 +17,7 @@ BEGIN
     SIGNAL SQLSTATE '45000'
       SET MESSAGE_TEXT = 'invalid lab database name';
   END IF;
-  IF p_database_user NOT REGEXP '^lab_[a-z0-9]{4,32}_user$' THEN
+  IF p_database_user NOT REGEXP '^lab_[a-z0-9]{4,23}_user$' THEN
     SIGNAL SQLSTATE '45000'
       SET MESSAGE_TEXT = 'invalid lab database user';
   END IF;
@@ -184,7 +184,7 @@ BEGIN
     SIGNAL SQLSTATE '45000'
       SET MESSAGE_TEXT = 'invalid lab database name';
   END IF;
-  IF p_database_user NOT REGEXP '^lab_[a-z0-9]{4,32}_user$' THEN
+  IF p_database_user NOT REGEXP '^lab_[a-z0-9]{4,23}_user$' THEN
     SIGNAL SQLSTATE '45000'
       SET MESSAGE_TEXT = 'invalid lab database user';
   END IF;

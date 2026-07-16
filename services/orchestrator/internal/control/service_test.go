@@ -82,17 +82,25 @@ func (d *dockerStub) ListManagedNetworks(
 }
 
 type databaseStub struct {
-	provisioned bool
-	destroyed   bool
+	provisioned    bool
+	destroyed      bool
+	failProvision  bool
+	provisionCount int
+	destroyCount   int
 }
 
 func (d *databaseStub) Provision(context.Context, string, string, string) error {
+	if d.failProvision {
+		return errors.New("database unavailable")
+	}
 	d.provisioned = true
+	d.provisionCount++
 	return nil
 }
 func (*databaseStub) Reset(context.Context, string) error { return nil }
 func (d *databaseStub) Destroy(context.Context, string, string) error {
 	d.destroyed = true
+	d.destroyCount++
 	return nil
 }
 
@@ -151,6 +159,115 @@ func TestProvisionCompensatesWhenNginxValidationFails(t *testing.T) {
 			nginx,
 			docker.removed,
 		)
+	}
+}
+
+func TestProvisionCompensatesWhenDatabaseProvisionFails(t *testing.T) {
+	service, _, database, _ := newTestService(t)
+	database.failProvision = true
+	response := service.Execute(context.Background(), protocol.Command{
+		CommandType: commandProvisionLab,
+		CommandID:   "cmd-database-failure",
+		OperationID: "op-database-failure",
+		LabID:       "lab-abcdef12",
+		RequestedBy: "1",
+		Payload: []byte(`{
+  "courseId":3,
+  "scenarioType":"application_cluster",
+  "scenarioTemplateId":"application_cluster_scenario_v1",
+  "initialInstances":1,
+  "redisRequired":false
+}`),
+	})
+	if response.Status != "failed" || errorCode(response.Error) != "LAB_DATABASE_UNAVAILABLE" {
+		t.Fatalf("Execute() = %#v", response)
+	}
+	if database.destroyCount != 1 {
+		t.Fatalf("database destroy count = %d; want 1", database.destroyCount)
+	}
+}
+
+func TestBasicNamesStayWithinMySQLUserLimit(t *testing.T) {
+	service, _, _, _ := newTestService(t)
+	registryScenario, ok := service.registry.Scenario("application_cluster_scenario_v1")
+	if !ok {
+		t.Fatal("application cluster scenario is missing")
+	}
+	names, err := service.names("lab-abcdef0123456789abcdef0123456789", registryScenario)
+	if err != nil {
+		t.Fatalf("names() error = %v", err)
+	}
+	if len(names.databaseUser) > 32 || len(names.normalized) > 23 {
+		t.Fatalf("database identities exceed limits: %#v", names)
+	}
+}
+
+func TestProvisionReturnsPersistableResourceFacts(t *testing.T) {
+	service, _, _, _ := newTestService(t)
+	response := service.Execute(context.Background(), protocol.Command{
+		CommandType: commandProvisionLab,
+		CommandID:   "cmd-1",
+		OperationID: "op-1",
+		LabID:       "lab-abcdef12",
+		RequestedBy: "1",
+		Payload: []byte(`{
+  "courseId":3,
+  "scenarioType":"application_cluster",
+  "scenarioTemplateId":"application_cluster_scenario_v1",
+  "initialInstances":1,
+  "redisRequired":false
+}`),
+	})
+	if response.Status != "succeeded" {
+		t.Fatalf("Execute() = %#v", response)
+	}
+	result, ok := response.Result.(map[string]any)
+	if !ok || result["networkId"] != "network-1" {
+		t.Fatalf("provision result = %#v", response.Result)
+	}
+	instances, ok := result["instances"].([]map[string]any)
+	if !ok || len(instances) != 1 || instances[0]["status"] != "running" ||
+		instances[0]["effectiveCapacity"] != 100 || instances[0]["currentWeight"] != 100 {
+		t.Fatalf("provision instances = %#v", result["instances"])
+	}
+}
+
+func TestResetRebuildsInitialLabResources(t *testing.T) {
+	service, _, database, nginx := newTestService(t)
+	provision := service.Execute(context.Background(), protocol.Command{
+		CommandType: commandProvisionLab,
+		CommandID:   "cmd-create",
+		OperationID: "op-create",
+		LabID:       "lab-abcdef12",
+		RequestedBy: "1",
+		Payload: []byte(`{
+  "courseId":3,
+  "scenarioType":"application_cluster",
+  "scenarioTemplateId":"application_cluster_scenario_v1",
+  "initialInstances":1,
+  "redisRequired":false
+}`),
+	})
+	if provision.Status != "succeeded" {
+		t.Fatalf("provision = %#v", provision)
+	}
+	reset := service.Execute(context.Background(), protocol.Command{
+		CommandType: commandResetLab,
+		CommandID:   "cmd-reset",
+		OperationID: "op-reset",
+		LabID:       "lab-abcdef12",
+		RequestedBy: "1",
+		Payload:     []byte(`{"scenarioTemplateId":"application_cluster_scenario_v1"}`),
+	})
+	if reset.Status != "succeeded" {
+		t.Fatalf("reset = %#v", reset)
+	}
+	if database.provisionCount != 2 || database.destroyCount != 1 || !nginx.removed {
+		t.Fatalf("reset database=%#v nginx=%#v", database, nginx)
+	}
+	result, ok := reset.Result.(map[string]any)
+	if !ok || result["labId"] != "lab-abcdef12" || result["networkId"] == "" {
+		t.Fatalf("reset result = %#v", reset.Result)
 	}
 }
 

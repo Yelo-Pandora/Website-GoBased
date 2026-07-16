@@ -178,13 +178,144 @@ paths:
         - sessionCookie: []
       parameters:
         - $ref: "#/components/parameters/CSRFToken"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/LabCreateRequest"
       responses:
+        "202":
+          description: The lab session and its idempotent create operation were accepted.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LabCreateResponse"
+        "400":
+          $ref: "#/components/responses/ValidationFailed"
         "401":
           $ref: "#/components/responses/AuthRequired"
         "403":
           $ref: "#/components/responses/CSRFInvalid"
-        "501":
-          description: Reserved for the lab implementation phase.
+        "404":
+          description: The requested course does not exist.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "409":
+          description: The user already has an active lab or the operation conflicts.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "503":
+          description: Lab capacity or trusted scenario resources are unavailable.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /api/v1/labs/{labId}:
+    get:
+      tags: [Labs]
+      summary: Get an owned lab snapshot
+      operationId: getLab
+      security:
+        - sessionCookie: []
+      parameters:
+        - $ref: "#/components/parameters/LabID"
+      responses:
+        "200":
+          description: Current persisted lab, topology, and latest operation state.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LabSnapshotResponse"
+        "401":
+          $ref: "#/components/responses/AuthRequired"
+        "404":
+          description: The lab does not exist or belongs to another user.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+    delete:
+      tags: [Labs]
+      summary: Terminate and destroy an owned lab
+      operationId: terminateLab
+      security:
+        - sessionCookie: []
+      parameters:
+        - $ref: "#/components/parameters/LabID"
+        - $ref: "#/components/parameters/CSRFToken"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/LabOperationRequest"
+      responses:
+        "202":
+          description: The idempotent destroy operation was accepted.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LabActionResponse"
+        "400":
+          $ref: "#/components/responses/ValidationFailed"
+        "401":
+          $ref: "#/components/responses/AuthRequired"
+        "403":
+          $ref: "#/components/responses/CSRFInvalid"
+        "404":
+          description: The lab does not exist or belongs to another user.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "409":
+          description: The lab is busy or cannot be terminated from its current state.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /api/v1/labs/{labId}/reset:
+    post:
+      tags: [Labs]
+      summary: Reset an owned lab to its initial scenario state
+      operationId: resetLab
+      security:
+        - sessionCookie: []
+      parameters:
+        - $ref: "#/components/parameters/LabID"
+        - $ref: "#/components/parameters/CSRFToken"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/LabOperationRequest"
+      responses:
+        "202":
+          description: The idempotent reset operation was accepted.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LabActionResponse"
+        "400":
+          $ref: "#/components/responses/ValidationFailed"
+        "401":
+          $ref: "#/components/responses/AuthRequired"
+        "403":
+          $ref: "#/components/responses/CSRFInvalid"
+        "404":
+          description: The lab does not exist or belongs to another user.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "409":
+          description: The lab is busy or not in a resettable running state.
           content:
             application/json:
               schema:
@@ -267,6 +398,13 @@ components:
       schema:
         type: string
         minLength: 1
+    LabID:
+      name: labId
+      in: path
+      required: true
+      schema:
+        type: string
+        pattern: "^[a-z0-9][a-z0-9-]{3,63}$"
   responses:
     ValidationFailed:
       description: Request JSON or fields are invalid.
@@ -470,6 +608,195 @@ components:
           properties:
             course:
               $ref: "#/components/schemas/CourseDetail"
+    LabCreateRequest:
+      type: object
+      additionalProperties: false
+      required: [operationId, courseId]
+      properties:
+        operationId:
+          type: string
+          minLength: 1
+          maxLength: 64
+        courseId:
+          type: integer
+          format: int64
+          minimum: 1
+    LabOperationRequest:
+      type: object
+      additionalProperties: false
+      required: [operationId]
+      properties:
+        operationId:
+          type: string
+          minLength: 1
+          maxLength: 64
+    LabSession:
+      type: object
+      required:
+        - id
+        - courseId
+        - scenarioType
+        - scenarioTemplateId
+        - status
+        - balancingMode
+        - redisEnabled
+        - startedAt
+        - lastEffectiveActionAt
+        - terminatedAt
+        - terminationReason
+        - createdAt
+        - updatedAt
+      properties:
+        id:
+          type: string
+        courseId:
+          type: integer
+          format: int64
+        scenarioType:
+          type: string
+        scenarioTemplateId:
+          type: string
+        status:
+          type: string
+          enum: [Preparing, Running, Expiring, Failed, Terminating, Terminated]
+        balancingMode:
+          type: string
+          enum: [fixed, adaptive]
+        redisEnabled:
+          type: boolean
+        startedAt:
+          oneOf:
+            - type: string
+              format: date-time
+            - type: "null"
+        lastEffectiveActionAt:
+          oneOf:
+            - type: string
+              format: date-time
+            - type: "null"
+        terminatedAt:
+          oneOf:
+            - type: string
+              format: date-time
+            - type: "null"
+        terminationReason:
+          oneOf:
+            - type: string
+            - type: "null"
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+    LabOperation:
+      type: object
+      required: [operationId, labId, action, status, submittedAt]
+      properties:
+        operationId:
+          type: string
+        labId:
+          type: string
+        action:
+          type: string
+          enum: [CREATE_LAB, RESET_LAB, DESTROY_LAB]
+        status:
+          type: string
+          enum: [pending, claimed, running, succeeded, failed, compensating]
+        submittedAt:
+          type: string
+          format: date-time
+        completedAt:
+          oneOf:
+            - type: string
+              format: date-time
+            - type: "null"
+    LabInstance:
+      type: object
+      required:
+        - instanceId
+        - instanceName
+        - status
+        - cpuLimitCores
+        - memoryLimitMb
+        - performancePercent
+        - effectiveCapacity
+        - currentWeight
+      properties:
+        instanceId:
+          type: string
+        instanceName:
+          type: string
+        status:
+          type: string
+        cpuLimitCores:
+          type: number
+        memoryLimitMb:
+          type: integer
+        performancePercent:
+          type: integer
+        effectiveCapacity:
+          type: integer
+        currentWeight:
+          type: integer
+    LabSnapshotResponse:
+      type: object
+      required: [data]
+      properties:
+        data:
+          type: object
+          required: [lab, topology, latestOperation]
+          properties:
+            lab:
+              $ref: "#/components/schemas/LabSession"
+            topology:
+              type: object
+              required: [instances, redis, gateway]
+              properties:
+                instances:
+                  type: array
+                  items:
+                    $ref: "#/components/schemas/LabInstance"
+                redis:
+                  oneOf:
+                    - type: object
+                      required: [status]
+                      properties:
+                        status:
+                          type: string
+                    - type: "null"
+                gateway:
+                  type: object
+                  required: [status]
+                  properties:
+                    status:
+                      type: string
+            latestOperation:
+              oneOf:
+                - $ref: "#/components/schemas/LabOperation"
+                - type: "null"
+    LabCreateResponse:
+      type: object
+      required: [data]
+      properties:
+        data:
+          type: object
+          required: [lab, operation]
+          properties:
+            lab:
+              $ref: "#/components/schemas/LabSession"
+            operation:
+              $ref: "#/components/schemas/LabOperation"
+    LabActionResponse:
+      type: object
+      required: [data]
+      properties:
+        data:
+          type: object
+          required: [operation]
+          properties:
+            operation:
+              $ref: "#/components/schemas/LabOperation"
     TrafficBatchRequest:
       type: object
       additionalProperties: false

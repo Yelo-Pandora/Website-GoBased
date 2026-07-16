@@ -128,11 +128,11 @@ SDS 只要求唯一性，没有固定 UUID 格式。
 | `available` | POST | `/api/v1/auth/login` | 测试账户登录 |
 | `available` | POST | `/api/v1/auth/logout` | 注销当前 Session |
 | `available` | GET | `/api/v1/auth/me` | 获取当前登录用户 |
-| `reserved` | POST | `/api/v1/labs` | 创建实验 |
-| `planned` | GET | `/api/v1/labs/:id` | 获取完整实验快照 |
+| `available` | POST | `/api/v1/labs` | 创建实验 |
+| `available` | GET | `/api/v1/labs/:id` | 获取完整实验快照 |
 | `planned` | POST | `/api/v1/labs/:id/actions` | 提交白名单实验动作 |
-| `planned` | POST | `/api/v1/labs/:id/reset` | 重置实验 |
-| `planned` | DELETE | `/api/v1/labs/:id` | 主动结束实验 |
+| `available` | POST | `/api/v1/labs/:id/reset` | 重置实验 |
+| `available` | DELETE | `/api/v1/labs/:id` | 主动结束实验 |
 | `planned` | POST | `/api/v1/labs/:id/traffic-batches` | 提交一个前端生成的请求批次 |
 
 ## 4. 当前可用端点
@@ -277,7 +277,6 @@ SDS 只要求唯一性，没有固定 UUID 格式。
       "contentFormat": "markdown",
       "implementation": {
         "requestPath": [
-          "traffic-generator",
           "lab-gateway-nginx",
           "lab-app",
           "shared-mysql"
@@ -459,11 +458,12 @@ Set-Cookie: session=<opaque-token>; HttpOnly; SameSite=Strict; Path=/
 
 ### 7.1 `POST /api/v1/labs`
 
-状态：`reserved`
+状态：`available`
 
-当前 OpenAPI 已保留该端点。阶段三已经实现内部状态机、持久操作队列、租约 Worker 和
-UDS 客户端，但在安全编排与失败补偿完成前，Router 仍返回
-`501 LABS_NOT_IMPLEMENTED`，不会创建实验资源。
+阶段五已接通实验创建闭环。请求先在平台数据库中创建 `Preparing` 会话和
+`CREATE_LAB` 操作，再由租约 Worker 调用受限 UDS 编排器；编排结果会持久化到
+`lab_sessions`、`lab_instances` 和 `lab_resources`。资源创建失败时会把会话标记为
+`Failed`，编排器负责清理已创建的半成品。
 
 请求 JSON：
 
@@ -511,7 +511,7 @@ UDS 客户端，但在安全编排与失败补偿完成前，Router 仍返回
 
 ### 7.2 `GET /api/v1/labs/:id`
 
-状态：`planned`
+状态：`available`
 
 该端点应返回页面恢复所需的完整实验快照。
 页面加载、刷新和异步操作轮询都必须先调用该端点。页面刷新后默认停止生成流量。
@@ -533,9 +533,10 @@ UDS 客户端，但在安全编排与失败补偿完成前，Router 仍返回
       "redisEnabled": false,
       "startedAt": "2026-07-13T06:30:12Z",
       "lastEffectiveActionAt": "2026-07-13T06:32:10Z",
-      "idleExpiresAt": "2026-07-13T06:42:10Z",
-      "maximumExpiresAt": "2026-07-13T07:00:12Z",
-      "terminationReason": null
+      "terminatedAt": null,
+      "terminationReason": null,
+      "createdAt": "2026-07-13T06:30:00Z",
+      "updatedAt": "2026-07-13T06:32:10Z"
     },
     "topology": {
       "instances": [
@@ -555,27 +556,12 @@ UDS 客户端，但在安全编排与失败补偿完成前，Router 仍返回
         "status": "ready"
       }
     },
-    "capacity": {
-      "baseCapacity": 100,
-      "capacityWindowMs": 1000,
-      "totalEffectiveCapacity": 100
-    },
-    "trafficPolicy": {
-      "requestUnits": {
-        "minimum": 1,
-        "maximum": 100,
-        "step": 1,
-        "default": 60
-      }
-    },
-    "cache": null,
     "latestOperation": {
       "operationId": "4f6ed5ac-1d24-49df-8de3-efac91d09a65",
       "action": "CREATE_LAB",
       "status": "succeeded",
-      "completedAt": "2026-07-13T06:30:12Z",
-      "error": null
-    },
+      "completedAt": "2026-07-13T06:30:12Z"
+    }
   }
 }
 ```
@@ -583,15 +569,13 @@ UDS 客户端，但在安全编排与失败补偿完成前，Router 仍返回
 明确来源字段包括实验状态、模板 ID、平衡模式、Redis 状态、实例资源、
 性能比例、有效容量、权重和操作状态。
 
-以下是计算或建议字段：
+以下计算字段尚未在阶段五快照中返回，将在生命周期和前端生成流量阶段接入：
 
 - `idleExpiresAt`
 - `maximumExpiresAt`
-- `gateway`
 - `capacity.totalEffectiveCapacity`
 - `trafficPolicy`
 - `cache`
-- `latestOperation`
 
 异步操作执行中建议每秒轮询，稳定运行时每三至五秒轮询。同步批次响应直接携带处理后的实例状态。
 
@@ -829,7 +813,7 @@ SDS 明确要求以下字段：
 
 ### 7.5 `POST /api/v1/labs/:id/reset`
 
-状态：`planned`
+状态：`available`
 
 请求 JSON：
 
@@ -861,14 +845,13 @@ SDS 明确要求以下字段：
 
 - `401 AUTH_REQUIRED`
 - `403 CSRF_INVALID`
-- `403 LAB_NOT_OWNED`
 - `404 LAB_NOT_FOUND`
 - `409 LAB_BUSY`
 - `503 DOCKER_UNAVAILABLE`
 
 ### 7.6 `DELETE /api/v1/labs/:id`
 
-状态：`planned`
+状态：`available`
 
 SRS 要求实验生命周期变更携带 `operationId`。
 本文建议 DELETE 请求使用 JSON Body。
@@ -897,8 +880,7 @@ SRS 要求实验生命周期变更携带 `operationId`。
 }
 ```
 
-`operationId` 放在 DELETE Body、Header 或 Query 中尚未最终确认。
-不建议放入 URL Query，统一 JSON Body 更容易与其他状态变更保持一致。
+DELETE 请求使用 JSON Body 携带 `operationId`，与重置操作保持一致。
 
 ## 8. 操作状态
 

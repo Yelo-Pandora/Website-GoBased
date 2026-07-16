@@ -14,6 +14,7 @@ import (
 	platformauth "website-gobased/services/platform-api/internal/auth"
 	"website-gobased/services/platform-api/internal/course"
 	"website-gobased/services/platform-api/internal/httpapi"
+	"website-gobased/services/platform-api/internal/lab"
 	"website-gobased/services/platform-api/internal/operation"
 	"website-gobased/services/platform-api/internal/orchestrator"
 )
@@ -62,6 +63,11 @@ func Run(ctx context.Context, cfg Config, logger *slog.Logger) error {
 		return fmt.Errorf("configure lab operation worker: %w", err)
 	}
 	go operationWorker.Run(ctx)
+	labs := lab.NewService(lab.NewRepository(database), lab.Quota{
+		MaxActiveLabs:          cfg.LabMaxActive,
+		MaxTemporaryContainers: cfg.LabMaxTempContainers,
+		MaxInstancesPerLab:     cfg.LabMaxInstances,
+	})
 
 	server := &http.Server{
 		Addr: cfg.Addr,
@@ -73,6 +79,7 @@ func Run(ctx context.Context, cfg Config, logger *slog.Logger) error {
 				course.NewRepository(database),
 				course.NewContentStore(),
 			),
+			labs,
 			authentication,
 			httpapi.AuthConfig{
 				CookieName:   cfg.AuthCookieName,

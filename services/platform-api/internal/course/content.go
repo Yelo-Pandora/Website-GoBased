@@ -41,7 +41,7 @@ func NewContentStore() *ContentStore {
 		"application-cluster": {
 			file: "content/application-cluster.md",
 			implementation: Implementation{
-				RequestPath: []string{"traffic-generator", "lab-gateway-nginx", "lab-app", "shared-mysql"},
+				RequestPath: []string{"lab-gateway-nginx", "lab-app", "shared-mysql"},
 				KeyConcepts: []string{"weighted-balancing", "health-check", "effective-capacity"},
 			},
 			lab: labDefinition("application_cluster", 1, 4),

@@ -86,6 +86,34 @@ func TestLoadRejectsUnknownFields(t *testing.T) {
 	}
 }
 
+func TestLoadConfiguredScenarioTemplates(t *testing.T) {
+	registry, err := Load(filepath.Join("..", "..", "..", "..", "configs"))
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	for _, id := range []string{
+		"application_data_separation_scenario_v1",
+		"application_cluster_scenario_v1",
+		"multi_level_cache_scenario_v1",
+		"cache_failures_scenario_v1",
+	} {
+		value, ok := registry.Scenario(id)
+		if !ok {
+			t.Fatalf("scenario %q is missing", id)
+		}
+		if value.ResourceTemplates.Application == "" || value.ResourceTemplates.Database == "" ||
+			value.ResourceTemplates.Network == "" || value.ResourceTemplates.NginxFragment == "" {
+			t.Fatalf("scenario %q has incomplete resource references: %#v", id, value.ResourceTemplates)
+		}
+	}
+	for _, id := range []string{"multi_level_cache_scenario_v1", "cache_failures_scenario_v1"} {
+		value, _ := registry.Scenario(id)
+		if value.ResourceTemplates.Redis != "session_redis_v1" {
+			t.Fatalf("scenario %q Redis template = %q; want session_redis_v1", id, value.ResourceTemplates.Redis)
+		}
+	}
+}
+
 func writeTemplate(t *testing.T, root, name, body string) {
 	t.Helper()
 	path := filepath.Join(root, filepath.FromSlash(name))

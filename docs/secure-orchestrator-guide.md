@@ -2,11 +2,9 @@
 
 ## 1. 阶段边界
 
-阶段四实现受限资源编排，但不开放浏览器侧实验创建。
-公开端点 `POST /api/v1/labs` 继续完成 Session 和 CSRF 校验后返回
-`501 LABS_NOT_IMPLEMENTED`。
-阶段五完成平台资源快照持久化和应用与数据分离闭环后，才会返回
-`202 Accepted`。
+阶段四实现受限资源编排，阶段五已开放浏览器侧实验创建。
+公开端点 `POST /api/v1/labs` 完成 Session 和 CSRF 校验后返回
+`202 Accepted`，Worker 通过 UDS 调用本编排器，并把结果持久化到平台资源表。
 
 当前阶段可以通过内部 UDS 命令真实创建和清理实验数据库、Docker 网络、应用容器以及
 Nginx 片段。
@@ -30,6 +28,9 @@ Nginx 片段。
 
 模板注册表从 `/opt/platform/configs` 读取固定 JSON 文件。
 解析时拒绝未知字段、重复 ID、循环继承、缺失引用和无效资源限制。
+当前场景模板包括 `application_data_separation_scenario_v1`、
+`application_cluster_scenario_v1`、`multi_level_cache_scenario_v1` 和
+`cache_failures_scenario_v1`；后两个场景额外引用实验 Redis 模板。
 
 容器模板固定以下内容：
 
@@ -128,8 +129,8 @@ Docker 清理目标必须带匹配的实验标签。
 
 命令默认只报告孤儿资源。
 只有明确设置清理参数时才执行反向清理。
-阶段五将资源写入 `lab_resources` 后，再增加数据库单独遗留时的孤儿核对；
-当前阶段的显式销毁和创建失败补偿仍会清理数据库及账号。
+阶段五已经把实验资源写入 `lab_resources`，显式销毁和创建失败补偿会清理数据库及账号。
+阶段六再增加按 `lab_resources` 执行的数据库单独遗留核对和周期性资源核对。
 
 ## 9. 验证结果
 
@@ -144,10 +145,10 @@ Docker 清理目标必须带匹配的实验标签。
 * 真实 UDS 重复创建幂等；
 * Docker、MySQL 和 Nginx 真实创建后完整清理；
 * Compose 健康状态；
-* 公开实验端点继续返回 501。
+* 公开实验创建、快照、重置和主动结束端点通过平台 API 测试。
 
-## 10. 下一阶段
+## 10. 阶段五接入
 
-阶段五将把平台实验创建服务接入现有 HTTP handler，并把编排结果写入
-`lab_sessions`、`lab_instances` 和 `lab_resources`。
-随后实现应用与数据分离课程所需的商品查询、实验快照、重置和主动结束接口。
+平台实验创建服务已接入 HTTP handler，编排结果会写入 `lab_sessions`、
+`lab_instances` 和 `lab_resources`。实验快照、重置和主动结束接口也已接入；商品查询和
+前端生成流量批次仍属于后续阶段。

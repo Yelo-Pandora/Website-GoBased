@@ -14,6 +14,7 @@ import (
 
 	platformauth "website-gobased/services/platform-api/internal/auth"
 	"website-gobased/services/platform-api/internal/course"
+	"website-gobased/services/platform-api/internal/lab"
 )
 
 type pingerStub struct {
@@ -24,6 +25,67 @@ type courseServiceStub struct{}
 
 type courseServiceCaptureStub struct {
 	listUserID *uint64
+}
+
+type labServiceStub struct {
+	createResult    lab.CreateResult
+	createErr       error
+	snapshotResult  lab.Snapshot
+	snapshotErr     error
+	resetResult     lab.ActionResult
+	resetErr        error
+	terminateResult lab.ActionResult
+	terminateErr    error
+	userID          uint64
+	labID           string
+	operationID     string
+	courseID        uint64
+}
+
+func (s *labServiceStub) Create(
+	_ context.Context,
+	userID uint64,
+	courseID uint64,
+	operationID string,
+) (lab.CreateResult, error) {
+	s.userID = userID
+	s.courseID = courseID
+	s.operationID = operationID
+	return s.createResult, s.createErr
+}
+
+func (s *labServiceStub) Snapshot(
+	_ context.Context,
+	labID string,
+	userID uint64,
+) (lab.Snapshot, error) {
+	s.userID = userID
+	s.labID = labID
+	return s.snapshotResult, s.snapshotErr
+}
+
+func (s *labServiceStub) Reset(
+	_ context.Context,
+	userID uint64,
+	labID string,
+	operationID string,
+) (lab.ActionResult, error) {
+	s.userID = userID
+	s.labID = labID
+	s.operationID = operationID
+	return s.resetResult, s.resetErr
+}
+
+func (s *labServiceStub) Terminate(
+	_ context.Context,
+	userID uint64,
+	labID string,
+	operationID string,
+) (lab.ActionResult, error) {
+	s.userID = userID
+	s.labID = labID
+	s.operationID = operationID
+	return s.terminateResult, s.terminateErr
 }
 
 type authenticationServiceStub struct {
@@ -129,6 +191,7 @@ func TestReadiness(t *testing.T) {
 				pingerStub{err: test.pingError},
 				"http://lab-gateway:8080",
 				courseServiceStub{},
+				&labServiceStub{},
 				authenticationServiceStub{},
 				AuthConfig{CookieName: "session"},
 			)
@@ -149,6 +212,7 @@ func TestSystemInfo(t *testing.T) {
 		pingerStub{},
 		"http://lab-gateway:8080",
 		courseServiceStub{},
+		&labServiceStub{},
 		authenticationServiceStub{},
 		AuthConfig{CookieName: "session"},
 	)
@@ -167,6 +231,7 @@ func TestCourseRoutes(t *testing.T) {
 		pingerStub{},
 		"http://lab-gateway:8080",
 		courseServiceStub{},
+		&labServiceStub{},
 		authenticationServiceStub{},
 		AuthConfig{CookieName: "session"},
 	)
@@ -196,6 +261,7 @@ func TestCourseListUsesAuthenticatedUser(t *testing.T) {
 		pingerStub{},
 		"http://lab-gateway:8080",
 		courses,
+		&labServiceStub{},
 		authenticationServiceStub{session: platformauth.Session{
 			ID:   1,
 			User: platformauth.User{ID: 7, Username: "learner", Status: "active"},
@@ -226,43 +292,164 @@ func TestCourseListUsesAuthenticatedUser(t *testing.T) {
 	}
 }
 
-func TestCreateLabReturnsReservedResponse(t *testing.T) {
-	session := platformauth.Session{ID: 1}
+func TestCreateLabReturnsAcceptedOperation(t *testing.T) {
+	now := time.Date(2026, time.July, 16, 8, 0, 0, 0, time.UTC)
+	session := platformauth.Session{
+		ID:   1,
+		User: platformauth.User{ID: 7, Username: "learner", Status: "active"},
+	}
+	labs := &labServiceStub{createResult: lab.CreateResult{
+		Session: lab.Session{
+			ID: "lab-test1234", CourseID: 3,
+			ScenarioType: "application_cluster", Status: lab.StatusPreparing,
+			CreatedAt: now, UpdatedAt: now,
+		},
+		Operation: lab.CreatedOperation{
+			OperationID: "operation-1", LabID: "lab-test1234",
+			Action: "CREATE_LAB", Status: "pending", SubmittedAt: now,
+		},
+	}}
 	router := NewRouter(
 		slog.New(slog.NewTextHandler(io.Discard, nil)),
 		pingerStub{},
 		"http://lab-gateway:8080",
 		courseServiceStub{},
+		labs,
 		authenticationServiceStub{session: session, csrfValid: true},
 		AuthConfig{CookieName: "session"},
 	)
-	request := httptest.NewRequest(http.MethodPost, "/api/v1/labs", nil)
+	request := httptest.NewRequest(
+		http.MethodPost,
+		"/api/v1/labs",
+		strings.NewReader(`{"operationId":"operation-1","courseId":3}`),
+	)
+	request.Header.Set("Content-Type", "application/json")
 	request.AddCookie(&http.Cookie{Name: "session", Value: "test-token"})
 	request.Header.Set(csrfHeaderName, "test-csrf")
 	response := httptest.NewRecorder()
 	router.ServeHTTP(response, request)
 
-	if response.Code != http.StatusNotImplemented {
+	if response.Code != http.StatusAccepted {
 		t.Fatalf(
 			"status = %d; want %d",
 			response.Code,
-			http.StatusNotImplemented,
+			http.StatusAccepted,
 		)
 	}
+	if labs.userID != 7 || labs.courseID != 3 || labs.operationID != "operation-1" {
+		t.Fatalf("Create() captured user=%d course=%d operation=%q", labs.userID, labs.courseID, labs.operationID)
+	}
+}
 
-	var body struct {
-		Error struct {
-			Code string `json:"code"`
-		} `json:"error"`
+func TestCreateLabMapsStableErrors(t *testing.T) {
+	tests := []struct {
+		name       string
+		err        error
+		wantStatus int
+		wantCode   string
+	}{
+		{name: "course missing", err: lab.ErrCourseNotFound, wantStatus: http.StatusNotFound, wantCode: "COURSE_NOT_FOUND"},
+		{name: "active lab", err: lab.ErrAlreadyActive, wantStatus: http.StatusConflict, wantCode: "LAB_ALREADY_ACTIVE"},
+		{name: "busy", err: lab.ErrBusy, wantStatus: http.StatusConflict, wantCode: "LAB_BUSY"},
+		{name: "capacity", err: lab.ErrCapacityExceeded, wantStatus: http.StatusServiceUnavailable, wantCode: "RESOURCE_CAPACITY_EXCEEDED"},
 	}
-	if err := json.Unmarshal(response.Body.Bytes(), &body); err != nil {
-		t.Fatalf("decode response: %v", err)
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			router := NewRouter(
+				slog.New(slog.NewTextHandler(io.Discard, nil)),
+				pingerStub{},
+				"http://lab-gateway:8080",
+				courseServiceStub{},
+				&labServiceStub{createErr: test.err},
+				authenticationServiceStub{
+					session:   platformauth.Session{User: platformauth.User{ID: 7}},
+					csrfValid: true,
+				},
+				AuthConfig{CookieName: "session"},
+			)
+			request := httptest.NewRequest(
+				http.MethodPost,
+				"/api/v1/labs",
+				strings.NewReader(`{"operationId":"operation-1","courseId":3}`),
+			)
+			request.AddCookie(&http.Cookie{Name: "session", Value: "test-token"})
+			request.Header.Set(csrfHeaderName, "test-csrf")
+			response := httptest.NewRecorder()
+			router.ServeHTTP(response, request)
+			if response.Code != test.wantStatus {
+				t.Fatalf("status = %d; want %d", response.Code, test.wantStatus)
+			}
+			var body struct {
+				Error struct {
+					Code string `json:"code"`
+				} `json:"error"`
+			}
+			if err := json.Unmarshal(response.Body.Bytes(), &body); err != nil {
+				t.Fatalf("decode response: %v", err)
+			}
+			if body.Error.Code != test.wantCode {
+				t.Fatalf("code = %q; want %q", body.Error.Code, test.wantCode)
+			}
+		})
 	}
-	if body.Error.Code != "LABS_NOT_IMPLEMENTED" {
-		t.Errorf(
-			"error code = %q; want LABS_NOT_IMPLEMENTED",
-			body.Error.Code,
-		)
+}
+
+func TestLabLifecycleRoutes(t *testing.T) {
+	session := platformauth.Session{
+		ID:   1,
+		User: platformauth.User{ID: 7, Username: "learner", Status: "active"},
+	}
+	labs := &labServiceStub{
+		snapshotResult: lab.Snapshot{Lab: lab.Session{
+			ID: "lab-test1234", CourseID: 3, Status: lab.StatusRunning,
+		}},
+		resetResult: lab.ActionResult{Operation: lab.CreatedOperation{
+			OperationID: "operation-reset", LabID: "lab-test1234",
+			Action: "RESET_LAB", Status: "pending",
+		}},
+		terminateResult: lab.ActionResult{Operation: lab.CreatedOperation{
+			OperationID: "operation-destroy", LabID: "lab-test1234",
+			Action: "DESTROY_LAB", Status: "pending",
+		}},
+	}
+	router := NewRouter(
+		slog.New(slog.NewTextHandler(io.Discard, nil)),
+		pingerStub{},
+		"http://lab-gateway:8080",
+		courseServiceStub{},
+		labs,
+		authenticationServiceStub{session: session, csrfValid: true},
+		AuthConfig{CookieName: "session"},
+	)
+
+	tests := []struct {
+		name       string
+		method     string
+		path       string
+		body       string
+		wantStatus int
+	}{
+		{name: "snapshot", method: http.MethodGet, path: "/api/v1/labs/lab-test1234", wantStatus: http.StatusOK},
+		{name: "reset", method: http.MethodPost, path: "/api/v1/labs/lab-test1234/reset", body: `{"operationId":"operation-reset"}`, wantStatus: http.StatusAccepted},
+		{name: "terminate", method: http.MethodDelete, path: "/api/v1/labs/lab-test1234", body: `{"operationId":"operation-destroy"}`, wantStatus: http.StatusAccepted},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			request := httptest.NewRequest(test.method, test.path, strings.NewReader(test.body))
+			request.AddCookie(&http.Cookie{Name: "session", Value: "test-token"})
+			if test.method != http.MethodGet {
+				request.Header.Set(csrfHeaderName, "test-csrf")
+				request.Header.Set("Content-Type", "application/json")
+			}
+			response := httptest.NewRecorder()
+			router.ServeHTTP(response, request)
+			if response.Code != test.wantStatus {
+				t.Fatalf("status = %d; want %d: %s", response.Code, test.wantStatus, response.Body.String())
+			}
+		})
+	}
+	if labs.userID != 7 || labs.labID != "lab-test1234" {
+		t.Fatalf("lab capture user=%d lab=%q", labs.userID, labs.labID)
 	}
 }
 
@@ -292,6 +479,7 @@ func TestAuthenticationRoutes(t *testing.T) {
 		pingerStub{},
 		"http://lab-gateway:8080",
 		courseServiceStub{},
+		&labServiceStub{},
 		authentication,
 		AuthConfig{CookieName: "session"},
 	)
@@ -355,6 +543,7 @@ func TestLogoutRejectsInvalidCSRF(t *testing.T) {
 		pingerStub{},
 		"http://lab-gateway:8080",
 		courseServiceStub{},
+		&labServiceStub{},
 		authenticationServiceStub{
 			session:   platformauth.Session{ID: 1},
 			csrfValid: false,

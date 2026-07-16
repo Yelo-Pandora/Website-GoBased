@@ -9,6 +9,7 @@ import (
 
 	"website-gobased/internal/httpserver"
 	"website-gobased/services/platform-api/internal/course"
+	"website-gobased/services/platform-api/internal/lab"
 )
 
 type databasePinger interface {
@@ -20,12 +21,35 @@ type courseService interface {
 	Get(ctx context.Context, slug string, userID *uint64) (course.Detail, error)
 }
 
+type labService interface {
+	Create(
+		ctx context.Context,
+		userID uint64,
+		courseID uint64,
+		operationID string,
+	) (lab.CreateResult, error)
+	Snapshot(ctx context.Context, labID string, userID uint64) (lab.Snapshot, error)
+	Reset(
+		ctx context.Context,
+		userID uint64,
+		labID string,
+		operationID string,
+	) (lab.ActionResult, error)
+	Terminate(
+		ctx context.Context,
+		userID uint64,
+		labID string,
+		operationID string,
+	) (lab.ActionResult, error)
+}
+
 // NewRouter builds the platform API routes.
 func NewRouter(
 	logger *slog.Logger,
 	database databasePinger,
 	labGatewayAddr string,
 	courses courseService,
+	labs labService,
 	authentication authenticationService,
 	authConfig AuthConfig,
 ) *gin.Engine {
@@ -34,6 +58,7 @@ func NewRouter(
 		database,
 		labGatewayAddr,
 		courses,
+		labs,
 		authentication,
 		authConfig,
 	)
@@ -64,6 +89,26 @@ func NewRouter(
 		handler.requireAuthentication,
 		handler.requireCSRF,
 		handler.createLab,
+	)
+	api.GET(
+		"/labs/:id",
+		handler.optionalAuthentication,
+		handler.requireAuthentication,
+		handler.getLab,
+	)
+	api.POST(
+		"/labs/:id/reset",
+		handler.optionalAuthentication,
+		handler.requireAuthentication,
+		handler.requireCSRF,
+		handler.resetLab,
+	)
+	api.DELETE(
+		"/labs/:id",
+		handler.optionalAuthentication,
+		handler.requireAuthentication,
+		handler.requireCSRF,
+		handler.terminateLab,
 	)
 	return router
 }

@@ -84,7 +84,7 @@ func validDatabaseName(value string) bool {
 }
 
 func validUserName(value string) bool {
-	return validIdentifier(value, "lab_", "_user", 4, 32)
+	return validIdentifier(value, "lab_", "_user", 4, 23)
 }
 
 func validIdentifier(value, prefix, suffix string, minBody, maxBody int) bool {

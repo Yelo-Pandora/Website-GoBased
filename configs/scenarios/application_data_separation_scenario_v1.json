@@ -1,0 +1,58 @@
+{
+  "templateId": "application_data_separation_scenario_v1",
+  "templateVersion": 1,
+  "scenarioType": "application_data_separation",
+  "resourceTemplates": {
+    "application": "app_container_v1",
+    "database": "lab_database_profile_v1",
+    "network": "session_network_v1",
+    "nginxFragment": "lab_nginx_fragment_v1"
+  },
+  "resources": {
+    "baseCpuLimitCores": 0.1,
+    "memoryLimitMb": 128,
+    "pidsLimit": 64
+  },
+  "capacity": {
+    "baseCapacity": 100,
+    "capacityWindowMs": 1000,
+    "initialPerformancePercent": 100,
+    "minPerformancePercent": 20,
+    "maxPerformancePercent": 100
+  },
+  "loadBalancing": {
+    "initialWeight": 100,
+    "mode": "fixed"
+  },
+  "orderSimulation": {
+    "defaultBatchSize": 60,
+    "defaultGenerationIntervalMs": 1000,
+    "processingDelayMs": 0,
+    "overloadPolicy": "drop_excess",
+    "queueMode": "disabled",
+    "concurrencyControl": "mutex",
+    "preserveArrivalOrder": false
+  },
+  "productSeeds": [
+    {
+      "id": 1,
+      "name": "Architecture Practice Laptop",
+      "category": "electronics",
+      "price": 6999.0,
+      "currency": "CNY",
+      "stockLabel": "in_stock",
+      "description": "Product used by the application and data separation lab.",
+      "version": 1
+    },
+    {
+      "id": 2,
+      "name": "Distributed Systems Handbook",
+      "category": "books",
+      "price": 129.0,
+      "currency": "CNY",
+      "stockLabel": "in_stock",
+      "description": "Product used by the application and data separation lab.",
+      "version": 1
+    }
+  ]
+}

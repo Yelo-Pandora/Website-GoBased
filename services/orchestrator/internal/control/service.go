@@ -37,6 +37,7 @@ const (
 	commandRemoveUpstream     = "REMOVE_LAB_UPSTREAM"
 	commandResetDatabase      = "RESET_LAB_DATABASE"
 	commandReconcileResources = "RECONCILE_RESOURCES"
+	maxDatabaseIdentityLength = 23
 )
 
 var allowedCommands = map[string]struct{}{
@@ -224,9 +225,6 @@ func (s *Service) provision(
 	if err != nil {
 		return nil, fail("INTERNAL_ERROR", "lab database credential could not be derived", err)
 	}
-	if err := s.database.Provision(ctx, names.database, names.databaseUser, password); err != nil {
-		return nil, fail("LAB_DATABASE_UNAVAILABLE", "lab database could not be provisioned", err)
-	}
 	compensate := true
 	defer func() {
 		if compensate {
@@ -236,6 +234,9 @@ func (s *Service) provision(
 			}
 		}
 	}()
+	if err := s.database.Provision(ctx, names.database, names.databaseUser, password); err != nil {
+		return nil, fail("LAB_DATABASE_UNAVAILABLE", "lab database could not be provisioned", err)
+	}
 
 	networkTemplate, _ := s.registry.Network(scenario.ResourceTemplates.Network)
 	labels := resourceLabels(command, "lab-network", networkTemplate.TemplateID)
@@ -275,6 +276,14 @@ func (s *Service) provision(
 			"instanceName":  instanceName,
 			"containerId":   container.ID,
 			"containerName": container.Name,
+			"status":        "running",
+			"cpuLimitCores": scenario.Resources.BaseCPULimitCores *
+				float64(scenario.Capacity.InitialPerformancePercent) / 100,
+			"memoryLimitMb":      scenario.Resources.MemoryLimitMB,
+			"performancePercent": scenario.Capacity.InitialPerformancePercent,
+			"effectiveCapacity": scenario.Capacity.BaseCapacity *
+				scenario.Capacity.InitialPerformancePercent / 100,
+			"currentWeight": scenario.LoadBalancing.InitialWeight,
 		})
 		servers = append(servers, nginx.Server{
 			Host: names.appContainer(instanceName), Port: 8080,
@@ -287,7 +296,10 @@ func (s *Service) provision(
 		if err != nil {
 			return nil, fail("DOCKER_UNAVAILABLE", "session Redis could not be provisioned", err)
 		}
-		redisResult = map[string]any{"containerId": container.ID, "containerName": container.Name}
+		redisResult = map[string]any{
+			"containerId": container.ID, "containerName": container.Name,
+			"status": "running",
+		}
 	}
 	if err := s.nginx.Apply(ctx, command.LabID, servers); err != nil {
 		return nil, fail("NGINX_CONFIG_INVALID", "lab gateway configuration could not be applied", err)
@@ -298,6 +310,7 @@ func (s *Service) provision(
 		"scenarioTemplateId": scenario.TemplateID,
 		"databaseName":       names.database,
 		"databaseUser":       names.databaseUser,
+		"networkId":          network.ID,
 		"networkName":        names.network,
 		"instances":          instances,
 		"redis":              redisResult,
@@ -309,17 +322,33 @@ func (s *Service) resetLab(ctx context.Context, command protocol.Command) (any, 
 	if err := decodePayload(command.Payload, &payload, true); err != nil {
 		return nil, reject("INVALID_COMMAND", "invalid reset payload", err)
 	}
-	if _, ok := s.registry.Scenario(payload.ScenarioTemplateID); !ok {
+	scenario, ok := s.registry.Scenario(payload.ScenarioTemplateID)
+	if !ok {
 		return nil, reject("TEMPLATE_NOT_FOUND", "scenario template is not available", nil)
 	}
-	names, err := s.basicNames(command.LabID)
+	names, err := s.names(command.LabID, scenario)
 	if err != nil {
 		return nil, reject("INVALID_COMMAND", "lab identity is invalid", err)
 	}
-	if err := s.database.Reset(ctx, names.database); err != nil {
-		return nil, fail("LAB_DATABASE_UNAVAILABLE", "lab database could not be reset", err)
+	if err := s.destroyResources(ctx, command.LabID, names); err != nil {
+		return nil, fail(
+			"RESOURCE_CLEANUP_FAILED",
+			"existing lab resources could not be removed for reset",
+			err,
+		)
 	}
-	return map[string]any{"labId": command.LabID, "databaseReset": true}, nil
+	provisionBody, err := json.Marshal(provisionPayload{
+		CourseID:           1,
+		ScenarioType:       scenario.ScenarioType,
+		ScenarioTemplateID: scenario.TemplateID,
+		InitialInstances:   1,
+		RedisRequired:      scenario.ResourceTemplates.Redis != "",
+	})
+	if err != nil {
+		return nil, fail("INTERNAL_ERROR", "reset command could not be prepared", err)
+	}
+	command.Payload = provisionBody
+	return s.provision(ctx, command)
 }
 
 func (s *Service) destroy(ctx context.Context, command protocol.Command) (any, *commandError) {
@@ -824,6 +853,9 @@ func (s *Service) names(labID string, scenario templates.Scenario) (resourceName
 		"{normalizedLabId}",
 		names.normalized,
 	)
+	if len(names.database) > 64 || len(names.databaseUser) > 32 {
+		return resourceNames{}, errors.New("database resource name exceeds engine limits")
+	}
 	names.network = strings.ReplaceAll(networkTemplate.NamePattern, "{labId}", labID)
 	return names, nil
 }
@@ -842,6 +874,9 @@ func (s *Service) basicNames(labID string) (resourceNames, error) {
 				return resourceNames{}, errors.New("normalized lab id is invalid")
 			}
 		}
+	}
+	if len(normalized) > maxDatabaseIdentityLength {
+		normalized = normalized[:maxDatabaseIdentityLength]
 	}
 	return resourceNames{
 		normalized:   normalized,

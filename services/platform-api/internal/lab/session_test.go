@@ -16,6 +16,40 @@ type createRepositoryStub struct {
 	ownedErr     error
 }
 
+type actionRepositoryStub struct {
+	createRepositoryStub
+	actionResult ActionResult
+	actionErr    error
+	snapshot     Snapshot
+	snapshotErr  error
+	action       string
+	labID        string
+	operationID  string
+}
+
+func (s *actionRepositoryStub) EnqueueAction(
+	_ context.Context,
+	_ uint64,
+	labID string,
+	operationID string,
+	action string,
+	_ any,
+	_ time.Time,
+) (ActionResult, error) {
+	s.action = action
+	s.labID = labID
+	s.operationID = operationID
+	return s.actionResult, s.actionErr
+}
+
+func (s *actionRepositoryStub) FindSnapshot(
+	_ context.Context,
+	_ string,
+	_ uint64,
+) (Snapshot, error) {
+	return s.snapshot, s.snapshotErr
+}
+
 func (s *createRepositoryStub) Create(
 	_ context.Context,
 	_ uint64,
@@ -85,6 +119,44 @@ func TestServiceGetOwnedPreservesOwnershipError(t *testing.T) {
 	_, err := service.GetOwned(context.Background(), "lab-test1234", 7)
 	if !errors.Is(err, ErrNotOwned) {
 		t.Fatalf("GetOwned() error = %v; want ErrNotOwned", err)
+	}
+}
+
+func TestServiceEnqueuesResetAndTerminate(t *testing.T) {
+	t.Parallel()
+
+	repository := &actionRepositoryStub{}
+	service := newService(repository, Quota{
+		MaxActiveLabs:          10,
+		MaxTemporaryContainers: 40,
+		MaxInstancesPerLab:     4,
+	})
+	if _, err := service.Reset(context.Background(), 7, "lab-test1234", "operation-reset"); err != nil {
+		t.Fatalf("Reset() error = %v", err)
+	}
+	if repository.action != "RESET_LAB" || repository.labID != "lab-test1234" {
+		t.Fatalf("Reset() repository capture = %#v", repository)
+	}
+	if _, err := service.Terminate(
+		context.Background(), 7, "lab-test1234", "operation-destroy",
+	); err != nil {
+		t.Fatalf("Terminate() error = %v", err)
+	}
+	if repository.action != "DESTROY_LAB" || repository.operationID != "operation-destroy" {
+		t.Fatalf("Terminate() repository capture = %#v", repository)
+	}
+}
+
+func TestServiceSnapshotHidesInvalidIdentityAsNotFound(t *testing.T) {
+	t.Parallel()
+
+	service := newService(&actionRepositoryStub{}, Quota{
+		MaxActiveLabs:          10,
+		MaxTemporaryContainers: 40,
+		MaxInstancesPerLab:     4,
+	})
+	if _, err := service.Snapshot(context.Background(), "bad lab", 7); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("Snapshot() error = %v; want ErrNotFound", err)
 	}
 }
 
