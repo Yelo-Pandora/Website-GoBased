@@ -66,8 +66,6 @@ type databaseOperator interface {
 	Provision(ctx context.Context, databaseName, userName, password string) error
 	Reset(ctx context.Context, databaseName string) error
 	Destroy(ctx context.Context, databaseName, userName string) error
-	List(ctx context.Context) ([]string, error)
-	ExpectedLabIDs(ctx context.Context) ([]string, error)
 }
 
 type nginxOperator interface {
@@ -516,14 +514,36 @@ func (s *Service) reconcile(ctx context.Context, command protocol.Command) (any,
 	if err := decodePayload(command.Payload, &payload, false); err != nil {
 		return nil, reject("INVALID_COMMAND", "invalid reconciliation payload", err)
 	}
-	expectedIDs, err := s.database.ExpectedLabIDs(ctx)
-	if err != nil {
-		return nil, fail("LAB_DATABASE_UNAVAILABLE", "expected lab resources could not be loaded", err)
+	if payload.ExpectedLabIDs == nil {
+		return nil, reject(
+			"INVALID_COMMAND",
+			"reconciliation payload must include expectedLabIds",
+			nil,
+		)
 	}
-	expected := make(map[string]bool, len(expectedIDs))
-	for _, labID := range expectedIDs {
+	expected := make(map[string]bool, len(*payload.ExpectedLabIDs))
+	for _, labID := range *payload.ExpectedLabIDs {
+		if !validLabID(labID) {
+			return nil, reject(
+				"INVALID_COMMAND",
+				"reconciliation payload contains an invalid lab id",
+				nil,
+			)
+		}
+		if expected[labID] {
+			return nil, reject(
+				"INVALID_COMMAND",
+				"reconciliation payload contains a duplicate lab id",
+				nil,
+			)
+		}
 		expected[labID] = true
 	}
+	expectedIDs := make([]string, 0, len(expected))
+	for labID := range expected {
+		expectedIDs = append(expectedIDs, labID)
+	}
+	sort.Strings(expectedIDs)
 	actual, err := s.actualLabIDs(ctx)
 	if err != nil {
 		return nil, fail("RECONCILIATION_FAILED", "managed resources could not be inspected", err)
@@ -716,13 +736,6 @@ func (s *Service) actualLabIDs(ctx context.Context) (map[string]bool, error) {
 	}
 	for _, labID := range fragments {
 		actual[labID] = true
-	}
-	databases, err := s.database.List(ctx)
-	if err != nil {
-		return nil, err
-	}
-	for _, databaseName := range databases {
-		actual["lab-"+strings.TrimPrefix(databaseName, "lab_")] = true
 	}
 	return actual, nil
 }

@@ -95,8 +95,6 @@ func (d *databaseStub) Destroy(context.Context, string, string) error {
 	d.destroyed = true
 	return nil
 }
-func (*databaseStub) List(context.Context) ([]string, error)           { return nil, nil }
-func (*databaseStub) ExpectedLabIDs(context.Context) ([]string, error) { return nil, nil }
 
 type nginxStub struct {
 	failApply bool
@@ -153,6 +151,71 @@ func TestProvisionCompensatesWhenNginxValidationFails(t *testing.T) {
 			nginx,
 			docker.removed,
 		)
+	}
+}
+
+func TestReconcileRequiresExpectedLabIDs(t *testing.T) {
+	service, _, _, _ := newTestService(t)
+	response := service.Execute(context.Background(), protocol.Command{
+		CommandType: commandReconcileResources,
+		CommandID:   "cmd-reconcile-missing-expected",
+		OperationID: "op-reconcile-missing-expected",
+		LabID:       "lab-abcdef12",
+		RequestedBy: "1",
+		Payload:     []byte(`{"cleanup":false}`),
+	})
+	if response.Status != "rejected" || errorCode(response.Error) != "INVALID_COMMAND" {
+		t.Fatalf("Execute() = %#v", response)
+	}
+}
+
+func TestReconcileUsesExpectedLabIDs(t *testing.T) {
+	service, docker, _, _ := newTestService(t)
+	docker.containers = []dockerapi.Resource{{
+		ID: "container-1",
+		Labels: map[string]string{
+			"platform.labId": "lab-abcdef12",
+		},
+	}}
+	response := service.Execute(context.Background(), protocol.Command{
+		CommandType: commandReconcileResources,
+		CommandID:   "cmd-reconcile-expected",
+		OperationID: "op-reconcile-expected",
+		LabID:       "lab-abcdef12",
+		RequestedBy: "1",
+		Payload: []byte(`{
+  "expectedLabIds":["lab-abcdef12"],
+  "cleanup":false
+}`),
+	})
+	if response.Status != "succeeded" {
+		t.Fatalf("Execute() = %#v", response)
+	}
+	fields, ok := response.Result.(map[string]any)
+	if !ok {
+		t.Fatalf("result type = %T", response.Result)
+	}
+	orphans, ok := fields["orphanLabIds"].([]string)
+	if !ok || len(orphans) != 0 {
+		t.Fatalf("orphanLabIds = %#v", fields["orphanLabIds"])
+	}
+}
+
+func TestReconcileRejectsDuplicateExpectedLabIDs(t *testing.T) {
+	service, _, _, _ := newTestService(t)
+	response := service.Execute(context.Background(), protocol.Command{
+		CommandType: commandReconcileResources,
+		CommandID:   "cmd-reconcile-duplicate",
+		OperationID: "op-reconcile-duplicate",
+		LabID:       "lab-abcdef12",
+		RequestedBy: "1",
+		Payload: []byte(`{
+  "expectedLabIds":["lab-abcdef12","lab-abcdef12"],
+  "cleanup":false
+}`),
+	})
+	if response.Status != "rejected" || errorCode(response.Error) != "INVALID_COMMAND" {
+		t.Fatalf("Execute() = %#v", response)
 	}
 }
 

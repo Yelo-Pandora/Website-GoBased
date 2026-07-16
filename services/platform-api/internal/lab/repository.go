@@ -11,7 +11,12 @@ import (
 	"github.com/go-sql-driver/mysql"
 )
 
-const createLabAction = "CREATE_LAB"
+const (
+	createLabAction                   = "CREATE_LAB"
+	globalAdmissionLockName           = "platform:global-admission"
+	globalAdmissionLockTimeoutSeconds = 5
+	globalAdmissionReleaseTimeout     = 5 * time.Second
+)
 
 var activeStatuses = []Status{
 	StatusPreparing,
@@ -40,11 +45,28 @@ func (r *Repository) Create(
 	quota Quota,
 	now time.Time,
 ) (CreateResult, error) {
-	tx, err := r.database.BeginTx(ctx, &sql.TxOptions{Isolation: sql.LevelReadCommitted})
+	connection, err := r.database.Conn(ctx)
+	if err != nil {
+		return CreateResult{}, fmt.Errorf("reserve create lab connection: %w", err)
+	}
+	defer connection.Close()
+
+	tx, err := connection.BeginTx(ctx, &sql.TxOptions{Isolation: sql.LevelReadCommitted})
 	if err != nil {
 		return CreateResult{}, fmt.Errorf("begin create lab transaction: %w", err)
 	}
-	defer tx.Rollback()
+	globalAdmissionLocked := false
+	defer func() {
+		_ = tx.Rollback()
+		if globalAdmissionLocked {
+			releaseCtx, cancel := context.WithTimeout(
+				context.WithoutCancel(ctx),
+				globalAdmissionReleaseTimeout,
+			)
+			_ = releaseGlobalAdmission(releaseCtx, connection)
+			cancel()
+		}
+	}()
 
 	existing, err := findExistingCreate(ctx, tx, operationID)
 	if err == nil {
@@ -66,6 +88,7 @@ func (r *Repository) Create(
 	if err := lockGlobalAdmission(ctx, tx); err != nil {
 		return CreateResult{}, err
 	}
+	globalAdmissionLocked = true
 	existing, err = findExistingCreate(ctx, tx, operationID)
 	if err == nil {
 		if existing.Operation.RequestedBy != userID ||
@@ -189,6 +212,16 @@ func (r *Repository) Create(
 	if err := tx.Commit(); err != nil {
 		return CreateResult{}, fmt.Errorf("commit create lab transaction: %w", err)
 	}
+	releaseCtx, cancel := context.WithTimeout(
+		context.WithoutCancel(ctx),
+		globalAdmissionReleaseTimeout,
+	)
+	err = releaseGlobalAdmission(releaseCtx, connection)
+	cancel()
+	if err != nil {
+		return CreateResult{}, err
+	}
+	globalAdmissionLocked = false
 	return CreateResult{
 		Session: session,
 		Operation: CreatedOperation{
@@ -304,13 +337,38 @@ func lockUser(ctx context.Context, tx *sql.Tx, userID uint64) error {
 }
 
 func lockGlobalAdmission(ctx context.Context, tx *sql.Tx) error {
-	var lockName string
-	if err := tx.QueryRowContext(ctx, `
-		SELECT lock_name
-		FROM lab_control_locks
-		WHERE lock_name = 'global-admission'
-		FOR UPDATE`).Scan(&lockName); err != nil {
+	var acquired sql.NullInt64
+	if err := tx.QueryRowContext(
+		ctx,
+		"SELECT GET_LOCK(?, ?)",
+		globalAdmissionLockName,
+		globalAdmissionLockTimeoutSeconds,
+	).Scan(&acquired); err != nil {
 		return fmt.Errorf("lock global lab admission: %w", err)
+	}
+	if !acquired.Valid {
+		return errors.New("lock global lab admission returned null")
+	}
+	if acquired.Int64 != 1 {
+		return errors.New("lock global lab admission timed out")
+	}
+	return nil
+}
+
+func releaseGlobalAdmission(ctx context.Context, connection *sql.Conn) error {
+	var released sql.NullInt64
+	if err := connection.QueryRowContext(
+		ctx,
+		"SELECT RELEASE_LOCK(?)",
+		globalAdmissionLockName,
+	).Scan(&released); err != nil {
+		return fmt.Errorf("release global lab admission: %w", err)
+	}
+	if !released.Valid {
+		return errors.New("release global lab admission lock was not owned")
+	}
+	if released.Int64 != 1 {
+		return errors.New("release global lab admission lock failed")
 	}
 	return nil
 }

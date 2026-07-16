@@ -3,8 +3,6 @@ USE platform;
 DROP PROCEDURE IF EXISTS provision_lab_database;
 DROP PROCEDURE IF EXISTS reset_lab_database;
 DROP PROCEDURE IF EXISTS destroy_lab_database;
-DROP PROCEDURE IF EXISTS list_lab_databases;
-DROP PROCEDURE IF EXISTS list_expected_lab_ids;
 
 DELIMITER $$
 
@@ -137,14 +135,6 @@ BEGIN
   EXECUTE statement_handle;
   DEALLOCATE PREPARE statement_handle;
 
-  INSERT INTO platform.orchestrator_lab_databases (
-    database_name,
-    database_user
-  ) VALUES (
-    p_database_name,
-    p_database_user
-  ) ON DUPLICATE KEY UPDATE
-    database_user = VALUES(database_user);
 END$$
 
 CREATE PROCEDURE reset_lab_database(
@@ -213,30 +203,6 @@ BEGIN
   EXECUTE statement_handle;
   DEALLOCATE PREPARE statement_handle;
 
-  DELETE FROM platform.orchestrator_lab_databases
-  WHERE database_name = p_database_name
-    AND database_user = p_database_user;
-END$$
-
-CREATE PROCEDURE list_lab_databases()
-SQL SECURITY DEFINER
-READS SQL DATA
-BEGIN
-  SELECT managed.database_name
-  FROM platform.orchestrator_lab_databases AS managed
-  INNER JOIN information_schema.schemata AS available_schemas
-    ON available_schemas.schema_name = managed.database_name
-  ORDER BY managed.database_name;
-END$$
-
-CREATE PROCEDURE list_expected_lab_ids()
-SQL SECURITY DEFINER
-READS SQL DATA
-BEGIN
-  SELECT id
-  FROM platform.lab_sessions
-  WHERE status IN ('Preparing', 'Running', 'Expiring', 'Terminating')
-  ORDER BY id;
 END$$
 
 DELIMITER ;

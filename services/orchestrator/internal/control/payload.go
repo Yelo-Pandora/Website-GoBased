@@ -49,5 +49,6 @@ func (p upstreamPayload) nginxServers() []nginx.Server {
 }
 
 type reconcilePayload struct {
-	Cleanup bool `json:"cleanup"`
+	ExpectedLabIDs *[]string `json:"expectedLabIds"`
+	Cleanup        bool      `json:"cleanup"`
 }

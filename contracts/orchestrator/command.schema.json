@@ -52,5 +52,44 @@
     "payload": {
       "type": "object"
     }
-  }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "commandType": {
+            "const": "RECONCILE_RESOURCES"
+          }
+        }
+      },
+      "then": {
+        "required": [
+          "payload"
+        ],
+        "properties": {
+          "payload": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "expectedLabIds",
+              "cleanup"
+            ],
+            "properties": {
+              "expectedLabIds": {
+                "type": "array",
+                "uniqueItems": true,
+                "items": {
+                  "type": "string",
+                  "pattern": "^[a-z0-9][a-z0-9-]{3,63}$"
+                }
+              },
+              "cleanup": {
+                "type": "boolean"
+              }
+            }
+          }
+        }
+      }
+    }
+  ]
 }

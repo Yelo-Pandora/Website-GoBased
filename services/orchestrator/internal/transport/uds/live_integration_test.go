@@ -62,7 +62,7 @@ func TestLiveProvisionIsIdempotentAndDestroyCleansResources(t *testing.T) {
 		OperationID: "op-phase4-reconcile",
 		LabID:       labID,
 		RequestedBy: "phase4-test",
-		Payload:     json.RawMessage(`{"cleanup":false}`),
+		Payload:     json.RawMessage(`{"expectedLabIds":[],"cleanup":false}`),
 	}
 	report := executeLiveCommand(t, client, reconcile)
 	if report.Status != "succeeded" || !resultContains(report.Result, "orphanLabIds", labID) {
@@ -70,7 +70,7 @@ func TestLiveProvisionIsIdempotentAndDestroyCleansResources(t *testing.T) {
 	}
 	reconcile.CommandID = "cmd-phase4-reconcile-cleanup"
 	reconcile.OperationID = "op-phase4-reconcile-cleanup"
-	reconcile.Payload = json.RawMessage(`{"cleanup":true}`)
+	reconcile.Payload = json.RawMessage(`{"expectedLabIds":[],"cleanup":true}`)
 	cleanup := executeLiveCommand(t, client, reconcile)
 	if cleanup.Status != "succeeded" || !resultContains(cleanup.Result, "cleanedLabIds", labID) {
 		t.Fatalf("reconciliation cleanup = %#v", cleanup)
