@@ -109,8 +109,7 @@ capability 删除和 `no-new-privileges`。
 * `internal/course`：课程查询、正文读取和学习进度。
 * `internal/lab`：实验状态机、归属、快照和生命周期规则。
 * `internal/operation`：operationId 幂等、持久队列、租约和 Worker。
-* `internal/event`：有界事件环和 SSE。
-* `internal/traffic`：有界真实请求生成任务。
+* `internal/traffic`：同步批次代理、参数校验、内部网关调用和响应映射。
 * `internal/balancer`：容量、状态和自适应权重算法。
 * `internal/repository`：MySQL 持久化适配器。
 * `internal/orchestrator`：HTTP/JSON over UDS 客户端。
@@ -206,7 +205,7 @@ SDS 明确平台数据库名为 `platform`。基础设施阶段将其固定为�
 * 不出现具体编程语言语法、框架配置或代码教程；
 * 不暗示某一种方案永远正确；
 * 不复制参考文章的原句、代码或配图；
-* 明确区分真实请求、教学等效负载和真实资源指标。
+* 明确区分真实请求、教学等效负载和真实资源指标；请求批次由浏览器生成，实际路由和处理结果由后端返回。
 
 ### 9.3 单机架构
 
@@ -309,14 +308,16 @@ operationId。只有通过这些检查的操作才进入持久队列。
 实现创建实验数据库、网络和首个应用实例，完成商品查询、实验快照、重置、主动结束和
 失败回滚。
 
-### 阶段 6：事件与生命周期
+### 阶段 6：生命周期与快照恢复
 
-实现有界事件环、SSE、断线补发、倒计时、空闲与最长时限回收，以及周期性资源核对。
+实现倒计时字段、空闲与最长时限回收、异步操作的快照轮询和周期性资源核对。
+MVP 不实现 SSE、Event Hub、有界事件环、断线补发或后端 Traffic Generator。
 
 ### 阶段 7：应用集群和固定权重
 
-实现扩缩容、健康检查、Nginx upstream、容量时间窗、真实低速流量、模拟订单处理/丢失、
-实例状态和固定权重调整。
+实现扩缩容、健康检查、Nginx upstream、容量时间窗、前端串行批次请求、模拟订单处理/丢失、
+实例状态和固定权重调整。批次请求通过 `POST /api/v1/labs/:id/traffic-batches` 同步返回，
+不进入持久操作队列；前端动画根据实际 `targetInstanceId` 和处理数量分支。
 
 ### 阶段 8：自适应负载均衡
 

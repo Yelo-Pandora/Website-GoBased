@@ -98,12 +98,12 @@
       "input_fields": [],
       "data_ranges": [],
       "conditions": [
-        "系统生成实验请求"
+        "前端按用户选择生成受限批次请求"
       ],
       "expected_actions": [
-        "系统使用预置商品、用户和订单数据生成轻量请求。"
+        "系统使用预置商品、用户和订单数据处理轻量批次。"
       ],
-      "notes": "Title: 网购业务背景. Source: SRC-CLI-001, SRC-CLI-002. Type: constraint. Confidence: high. Status: accepted. Constraints: MVP不实现面向消费者的完整商城、支付或后台管理. Acceptance candidate: 给定任一实验，业务请求可解释为商品查询或模拟订单，且系统没有完整商城流程。"
+      "notes": "Title: 网购业务背景. Source: SRC-CLI-001, SRC-CLI-002, SRC-CLI-004. Type: constraint. Confidence: high. Status: accepted. Constraints: MVP不实现面向消费者的完整商城、支付或后台管理. Acceptance candidate: 给定任一实验，业务请求可解释为商品查询或模拟订单，且系统没有完整商城流程。"
     },
     {
       "id": "R6",
@@ -220,7 +220,7 @@
       "expected_actions": [
         "系统提醒用户并在超时后进入Terminating。"
       ],
-      "notes": "Title: 自动超时回收. Source: SRC-CLI-002. Type: business_rule. Confidence: high. Status: accepted. Constraints: SSE心跳、页面刷新和只读浏览不得刷新空闲计时. Acceptance candidate: 给定实验持续无有效操作10分钟或运行满30分钟，系统自动清理实验。"
+      "notes": "Title: 自动超时回收. Source: SRC-CLI-002, SRC-CLI-004. Type: business_rule. Confidence: high. Status: accepted. Constraints: 自动流量批次、页面刷新、快照轮询和只读浏览不得刷新空闲计时. Acceptance candidate: 给定实验持续无有效操作10分钟或运行满30分钟，系统自动清理实验。"
     },
     {
       "id": "R13",
@@ -426,21 +426,22 @@
     },
     {
       "id": "R25",
-      "description": "实验流量应以低实际速率真实经过内部Nginx并由应用实例处理。",
+      "description": "前端生成的低速批次请求应通过平台后端和内部Nginx，由实际应用实例同步处理。",
       "input_fields": [
-        "trafficLevel",
-        "scenarioId"
+        "batchId",
+        "productId",
+        "requestUnits"
       ],
       "data_ranges": [
         "actualRequestRate: configured low rate"
       ],
       "conditions": [
-        "用户触发流量"
+        "当前页面生成一个受限请求批次"
       ],
       "expected_actions": [
-        "实例响应instanceId和requestId，平台记录实际路由结果。"
+        "实例响应batchId、targetInstanceId、processedUnits、droppedUnits和处理后状态。"
       ],
-      "notes": "Title: 真实请求分配. Source: SRC-CLI-001, SRC-CLI-002. Type: functional. Confidence: high. Status: accepted. Constraints: 前端动画不得自行随机决定处理实例. Acceptance candidate: 给定一批流量，每个请求的展示路径可由实际响应中的instanceId证明。"
+      "notes": "Title: 真实请求分配. Source: SRC-CLI-001, SRC-CLI-002, SRC-CLI-004. Type: functional. Confidence: high. Status: accepted. Constraints: 前端不得指定内部地址、随机决定目标实例或自行计算处理结果; 统一限流默认按已认证用户每秒10个批次、突发10个. Acceptance candidate: 给定一批流量，成功球进入的实例与响应中的targetInstanceId一致。"
     },
     {
       "id": "R26",
@@ -460,9 +461,9 @@
         "实例存在且有容量或健康指标"
       ],
       "expected_actions": [
-        "系统推送loadRatio、status和相关计数。"
+        "同步批次响应和实验快照返回loadRatio、loadState和相关计数。"
       ],
-      "notes": "Title: 实例负载状态. Source: SRC-CLI-002. Type: functional. Confidence: high. Status: accepted. Constraints: 前端颜色和效果应仅消费后端状态数据. Acceptance candidate: 给定相对负载超过100%，实例状态为overloaded；健康检查失败时为unavailable。"
+      "notes": "Title: 实例负载状态. Source: SRC-CLI-002, SRC-CLI-004. Type: functional. Confidence: high. Status: accepted. Constraints: 前端颜色和效果应仅消费后端状态数据. Acceptance candidate: 给定相对负载超过100%，实例状态为overloaded；健康检查失败时为unavailable。"
     },
     {
       "id": "R27",
@@ -478,9 +479,9 @@
         "请求批次超过当前周期剩余有效容量"
       ],
       "expected_actions": [
-        "应用返回received、processed、dropped和overloaded。"
+        "应用同步返回receivedUnits、processedUnits、droppedUnits和处理后负载。"
       ],
-      "notes": "Title: 过载订单丢失. Source: SRC-CLI-002. Type: functional. Confidence: high. Status: accepted. Constraints: 不得通过真实压满CPU制造效果; 丢失订单不得写入MySQL明细. Acceptance candidate: 给定容量6且批次20，响应显示处理6、丢失14并推送过载事件。"
+      "notes": "Title: 过载订单丢失. Source: SRC-CLI-002, SRC-CLI-004. Type: functional. Confidence: high. Status: accepted. Constraints: 不得通过真实压满CPU制造效果; 丢失订单不得写入MySQL明细. Acceptance candidate: 给定容量6且批次20，响应显示处理6、丢失14，前端在网关把原球分成标注6和14的两个球。"
     },
     {
       "id": "R28",
@@ -724,35 +725,35 @@
       "id": "R43",
       "description": "MySQL应保存账号、进度、会话、实例清单和操作摘要，高频指标应使用有界内存缓冲。",
       "input_fields": [
-        "event",
+        "batchResult",
         "summary"
       ],
       "data_ranges": [],
       "conditions": [
-        "系统产生平台数据或实验事件"
+        "系统产生平台数据或实验流量"
       ],
       "expected_actions": [
-        "系统持久化低频数据并聚合高频数据。"
+        "系统持久化低频数据，并按时间窗口聚合received、processed和dropped。"
       ],
-      "notes": "Title: 持久与高频数据分离. Source: SRC-CLI-002. Type: data_rule. Confidence: high. Status: accepted. Constraints: 不得逐条持久化模拟订单、缓存命中和指标采样. Acceptance candidate: 给定持续实验流量，MySQL记录量按摘要增长而非按每个等效订单增长。"
+      "notes": "Title: 持久与高频数据分离. Source: SRC-CLI-002, SRC-CLI-004. Type: data_rule. Confidence: high. Status: accepted. Constraints: 不得逐条持久化模拟订单、缓存命中、批次结果或指标采样. Acceptance candidate: 给定持续实验流量，MySQL记录量按时间窗口摘要增长而非按每个批次或等效订单增长。"
     },
     {
       "id": "R44",
-      "description": "系统应通过SSE推送容器、请求、权重、负载、订单丢失、缓存和倒计时事件。",
+      "description": "系统应通过同步批次响应提供实际路由、处理量、丢弃量和处理后负载，并通过实验快照恢复低频状态。",
       "input_fields": [
         "labId",
-        "lastEventId"
+        "batchId"
       ],
       "data_ranges": [
-        "normalEventDelay: <= 2 seconds"
+        "normalBatchResponse: <= 2 seconds"
       ],
       "conditions": [
-        "用户拥有活动实验"
+        "用户拥有运行中的活动实验"
       ],
       "expected_actions": [
-        "系统推送递增事件序号并支持有限补发。"
+        "系统返回结果驱动动画所需字段，快照返回拓扑、实例状态、过期时间和最新操作。"
       ],
-      "notes": "Title: SSE实时状态. Source: SRC-CLI-002. Type: functional. Confidence: high. Status: accepted. Constraints: 断线重连前应先获取完整状态快照. Acceptance candidate: 给定浏览器断线重连，页面先恢复快照，再继续接收新事件。"
+      "notes": "Title: 同步批次响应与快照恢复. Source: SRC-CLI-004. Type: functional. Confidence: high. Status: accepted. Constraints: 页面刷新后默认停止生成流量；异步控制操作通过快照轮询恢复状态；不使用SSE或事件补发. Acceptance candidate: 给定页面刷新或异步操作进行中，页面可以通过快照恢复实验状态。"
     },
     {
       "id": "R45",
@@ -815,7 +816,7 @@
       "expected_actions": [
         "系统在支持的桌面浏览器提供完整实验能力。"
       ],
-      "notes": "Title: 访问终端与部署约束. Source: SRC-CLI-001, SRC-CLI-002. Type: constraint. Confidence: high. Status: accepted. Constraints: 不要求手机端完整实验体验; HTTPS列为后续优先改进. Acceptance candidate: 给定受支持桌面浏览器，理论、登录、SSE和实验控制可正常使用。"
+      "notes": "Title: 访问终端与部署约束. Source: SRC-CLI-001, SRC-CLI-002, SRC-CLI-004. Type: constraint. Confidence: high. Status: accepted. Constraints: 不要求手机端完整实验体验; HTTPS列为后续优先改进. Acceptance candidate: 给定受支持桌面浏览器，理论、登录、同步批次动画、快照轮询和实验控制可正常使用。"
     },
     {
       "id": "R49",

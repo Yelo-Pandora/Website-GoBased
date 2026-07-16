@@ -189,6 +189,68 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+  /api/v1/labs/{labId}/traffic-batches:
+    post:
+      tags: [Labs]
+      summary: Submit one frontend-generated traffic batch
+      operationId: submitTrafficBatch
+      security:
+        - sessionCookie: []
+      parameters:
+        - name: labId
+          in: path
+          required: true
+          schema:
+            type: string
+            pattern: "^[a-z0-9][a-z0-9-]{3,63}$"
+        - $ref: "#/components/parameters/CSRFToken"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TrafficBatchRequest"
+      responses:
+        "200":
+          description: Batch was processed, partially processed, or dropped by capacity.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TrafficBatchResponse"
+        "400":
+          description: Batch fields, product, or request units are invalid.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          $ref: "#/components/responses/AuthRequired"
+        "403":
+          $ref: "#/components/responses/CSRFInvalid"
+        "404":
+          description: The lab does not exist or is not owned by the user.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "409":
+          description: The lab is not running.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "429":
+          description: The platform HTTP rate limit was exceeded.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "503":
+          description: The lab gateway, instance, or internal response is unavailable.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
 components:
   securitySchemes:
     sessionCookie:
@@ -408,6 +470,91 @@ components:
           properties:
             course:
               $ref: "#/components/schemas/CourseDetail"
+    TrafficBatchRequest:
+      type: object
+      additionalProperties: false
+      required: [batchId, productId, requestUnits]
+      properties:
+        batchId:
+          type: string
+          minLength: 1
+          maxLength: 64
+        productId:
+          type: integer
+          format: int64
+          minimum: 1
+        requestUnits:
+          type: integer
+          minimum: 1
+          maximum: 100
+    TrafficBatchResponse:
+      type: object
+      required: [data]
+      properties:
+        data:
+          type: object
+          required: [result]
+          properties:
+            result:
+              $ref: "#/components/schemas/TrafficBatchResult"
+    TrafficBatchResult:
+      type: object
+      required:
+        - batchId
+        - labId
+        - status
+        - occurredAt
+        - path
+        - targetInstanceId
+        - receivedUnits
+        - processedUnits
+        - droppedUnits
+        - instanceState
+      properties:
+        batchId:
+          type: string
+        labId:
+          type: string
+        status:
+          type: string
+          enum: [processed, partially_processed, dropped]
+        occurredAt:
+          type: string
+          format: date-time
+        path:
+          type: array
+          minItems: 2
+          items:
+            type: string
+        targetInstanceId:
+          type: string
+        receivedUnits:
+          type: integer
+          minimum: 0
+        processedUnits:
+          type: integer
+          minimum: 0
+        droppedUnits:
+          type: integer
+          minimum: 0
+        instanceState:
+          $ref: "#/components/schemas/TrafficInstanceState"
+    TrafficInstanceState:
+      type: object
+      required: [effectiveCapacity, remainingCapacity, loadRatio, loadState]
+      properties:
+        effectiveCapacity:
+          type: integer
+          minimum: 0
+        remainingCapacity:
+          type: integer
+          minimum: 0
+        loadRatio:
+          type: number
+          minimum: 0
+        loadState:
+          type: string
+          enum: [idle, normal, high, overloaded, unavailable]
     ErrorResponse:
       type: object
       required: [error, requestId]

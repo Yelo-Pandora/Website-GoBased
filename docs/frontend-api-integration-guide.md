@@ -14,7 +14,7 @@
 1. 先阅读第 3 节，确认端点当前属于哪个实现阶段。
 2. 使用第 5 至第 7 节的 JSON 建立 Course、Auth 和 Lab Mock。
 3. 对实验异步变更统一模拟 `202 Accepted` 和 Operation 对象。
-4. 使用第 7.6 节模拟 SSE，把 Operation 和 Lab Snapshot 更新到最新状态。
+4. 使用第 7.3 节模拟同步批次响应，把小球动画和实例状态更新到最新结果；异步操作通过 Lab Snapshot 轮询。
 5. 使用第 9 节的稳定错误码驱动页面错误分支。
 6. 在后端正式开发前评审第 13 节的开放问题。
 
@@ -133,7 +133,7 @@ SDS 只要求唯一性，没有固定 UUID 格式。
 | `planned` | POST | `/api/v1/labs/:id/actions` | 提交白名单实验动作 |
 | `planned` | POST | `/api/v1/labs/:id/reset` | 重置实验 |
 | `planned` | DELETE | `/api/v1/labs/:id` | 主动结束实验 |
-| `planned` | GET | `/api/v1/labs/:id/events` | 订阅实验 SSE 事件 |
+| `planned` | POST | `/api/v1/labs/:id/traffic-batches` | 提交一个前端生成的请求批次 |
 
 ## 4. 当前可用端点
 
@@ -514,7 +514,7 @@ UDS 客户端，但在安全编排与失败补偿完成前，Router 仍返回
 状态：`planned`
 
 该端点应返回页面恢复所需的完整实验快照。
-浏览器连接或重连 SSE 前必须先调用该端点。
+页面加载、刷新和异步操作轮询都必须先调用该端点。页面刷新后默认停止生成流量。
 
 请求没有 JSON Body。
 
@@ -560,13 +560,13 @@ UDS 客户端，但在安全编排与失败补偿完成前，Router 仍返回
       "capacityWindowMs": 1000,
       "totalEffectiveCapacity": 100
     },
-    "traffic": {
-      "running": false,
-      "batchSize": 60,
-      "generationIntervalMs": 1000,
-      "receivedOrders": 0,
-      "processedOrders": 0,
-      "droppedOrders": 0
+    "trafficPolicy": {
+      "requestUnits": {
+        "minimum": 1,
+        "maximum": 100,
+        "step": 1,
+        "default": 60
+      }
     },
     "cache": null,
     "latestOperation": {
@@ -576,7 +576,6 @@ UDS 客户端，但在安全编排与失败补偿完成前，Router 仍返回
       "completedAt": "2026-07-13T06:30:12Z",
       "error": null
     },
-    "lastEventId": "evt_00000042"
   }
 }
 ```
@@ -590,15 +589,15 @@ UDS 客户端，但在安全编排与失败补偿完成前，Router 仍返回
 - `maximumExpiresAt`
 - `gateway`
 - `capacity.totalEffectiveCapacity`
-- `traffic`
+- `trafficPolicy`
 - `cache`
 - `latestOperation`
-- `lastEventId`
+
+异步操作执行中建议每秒轮询，稳定运行时每三至五秒轮询。同步批次响应直接携带处理后的实例状态。
 
 建议错误：
 
 - `401 AUTH_REQUIRED`
-- `403 LAB_NOT_OWNED`
 - `404 LAB_NOT_FOUND`
 
 ### 7.3 `POST /api/v1/labs/:id/actions`
@@ -745,31 +744,6 @@ SDS 明确要求以下字段：
 ["fixed", "adaptive"]
 ```
 
-启动轻量实验流量：
-
-```json
-{
-  "operationId": "5cb4c359-a4a7-4681-90fb-e19b30f9f447",
-  "actionType": "START_TRAFFIC",
-  "targetInstanceId": null,
-  "parameters": {
-    "batchSize": 60,
-    "generationIntervalMs": 1000
-  }
-}
-```
-
-停止实验流量：
-
-```json
-{
-  "operationId": "09f5bb89-a16c-42ef-b749-c36acb3faeaa",
-  "actionType": "STOP_TRAFFIC",
-  "targetInstanceId": null,
-  "parameters": {}
-}
-```
-
 重启会话 Redis：
 
 ```json
@@ -798,7 +772,62 @@ SDS 明确要求以下字段：
 
 缓存场景、策略枚举和触发故障动作仍需单独固定。
 
-### 7.4 `POST /api/v1/labs/:id/reset`
+### 7.4 `POST /api/v1/labs/:id/traffic-batches`
+
+状态：`planned`
+
+该端点接收当前页面生成的一批教学等效请求。它是同步数据面接口，不创建
+`lab_operations`，也不使用 `operationId`。当前页面必须保证同一时间只有一个未完成请求。
+
+请求：
+
+```json
+{
+  "batchId": "batch-8f3c",
+  "productId": 1,
+  "requestUnits": 10
+}
+```
+
+成功响应：`200 OK`。全部丢弃也是正常业务结果，不返回 `429`。
+
+```json
+{
+  "data": {
+    "result": {
+      "batchId": "batch-8f3c",
+      "status": "partially_processed",
+      "occurredAt": "2026-07-16T10:00:00Z",
+      "path": ["user-pool", "lab-gateway", "app-1"],
+      "targetInstanceId": "app-1",
+      "receivedUnits": 10,
+      "processedUnits": 6,
+      "droppedUnits": 4,
+      "instanceState": {
+        "effectiveCapacity": 100,
+        "remainingCapacity": 0,
+        "loadRatio": 1.04,
+        "loadState": "overloaded"
+      }
+    }
+  }
+}
+```
+
+前端动画规则：成功球进入 `targetInstanceId`；部分成功时在网关生成两个分别标注
+`processedUnits` 和 `droppedUnits` 的球；全部丢弃时原球偏离并消失；错误响应生成错误球。
+
+建议错误：
+
+- `400 TRAFFIC_REQUEST_INVALID`
+- `401 AUTH_REQUIRED`
+- `403 CSRF_INVALID`
+- `404 LAB_NOT_FOUND`
+- `409 LAB_NOT_RUNNING`
+- `429 RATE_LIMITED`
+- `503 LAB_UNAVAILABLE`
+
+### 7.5 `POST /api/v1/labs/:id/reset`
 
 状态：`planned`
 
@@ -837,7 +866,7 @@ SDS 明确要求以下字段：
 - `409 LAB_BUSY`
 - `503 DOCKER_UNAVAILABLE`
 
-### 7.5 `DELETE /api/v1/labs/:id`
+### 7.6 `DELETE /api/v1/labs/:id`
 
 状态：`planned`
 
@@ -871,81 +900,6 @@ SRS 要求实验生命周期变更携带 `operationId`。
 `operationId` 放在 DELETE Body、Header 或 Query 中尚未最终确认。
 不建议放入 URL Query，统一 JSON Body 更容易与其他状态变更保持一致。
 
-### 7.6 `GET /api/v1/labs/:id/events`
-
-状态：`planned`
-
-该端点返回 `text/event-stream`，不是普通 JSON 响应。
-认证使用同源 Session Cookie。
-
-首次连接前，前端必须先请求实验快照。
-
-建议请求：
-
-```http
-GET /api/v1/labs/lab_01J2M8Y5A4D7KQ2V9N6P3R1T0X/events
-Accept: text/event-stream
-Cookie: session=<http-only-token>
-```
-
-建议 SSE 消息：
-
-```text
-id: evt_00000043
-event: lab.instance.updated
-data: {"eventId":"evt_00000043","labId":"lab_01J2M8Y5A4D7KQ2V9N6P3R1T0X","eventType":"INSTANCE_CAPACITY_UPDATED","occurredAt":"2026-07-13T06:35:02Z","payload":{"instanceId":"app-3","performancePercent":30,"effectiveCapacity":30}}
-
-```
-
-其中 `data` 解析后的 JSON 为：
-
-```json
-{
-  "eventId": "evt_00000043",
-  "labId": "lab_01J2M8Y5A4D7KQ2V9N6P3R1T0X",
-  "eventType": "INSTANCE_CAPACITY_UPDATED",
-  "occurredAt": "2026-07-13T06:35:02Z",
-  "payload": {
-    "instanceId": "app-3",
-    "performancePercent": 30,
-    "effectiveCapacity": 30
-  }
-}
-```
-
-SDS 明确规定每个事件包含：
-
-- `eventId`
-- `labId`
-- `eventType`
-- `occurredAt`
-- `payload`
-
-建议事件类型：
-
-```json
-[
-  "LAB_STATUS_CHANGED",
-  "LAB_EXPIRING",
-  "INSTANCE_ADDED",
-  "INSTANCE_REMOVED",
-  "INSTANCE_CAPACITY_UPDATED",
-  "WEIGHTS_UPDATED",
-  "TRAFFIC_SAMPLE",
-  "ORDERS_DROPPED",
-  "CACHE_METRICS_UPDATED",
-  "OPERATION_SUCCEEDED",
-  "OPERATION_FAILED",
-  "HEARTBEAT"
-]
-```
-
-这些事件名称是根据 SDS 的事件内容建议的，尚未成为正式枚举。
-
-浏览器自动重连会使用标准 SSE `Last-Event-ID`。
-页面完全刷新后如何把快照中的 `lastEventId` 传回服务端仍需确认。
-可选方案是增加 `afterEventId` Query 参数。
-
 ## 8. 操作状态
 
 SDS 定义的操作状态为：
@@ -962,7 +916,7 @@ SDS 定义的操作状态为：
 ```
 
 耗时动作返回 `202 Accepted`。
-完成结果通过实验快照和 SSE 获取。
+完成结果通过实验快照轮询获取。
 
 建议操作对象：
 
@@ -985,17 +939,7 @@ SDS 定义的操作状态为：
 }
 ```
 
-SDS 提到“查询接口和 SSE”都可获取完成状态，但外部端点列表没有定义独立的
-操作查询 URL。
-这是需要后端设计补齐的契约缺口。
-
-建议候选端点：
-
-```text
-GET /api/v1/operations/:operationId
-```
-
-该候选端点状态为 `needs-review`，前端暂时应从实验快照和 SSE 获取状态。
+实验控制操作通过实验快照返回 `latestOperation`，不增加独立的操作查询 URL。
 
 ## 9. 统一错误响应
 
@@ -1020,24 +964,21 @@ GET /api/v1/operations/:operationId
 
 | HTTP | 错误码示例 | 含义 |
 | --- | --- | --- |
-| 400 | `VALIDATION_FAILED` | JSON 或字段格式不合法 |
+| 400 | `VALIDATION_FAILED` | 通用 JSON 或字段格式不合法 |
+| 400 | `TRAFFIC_REQUEST_INVALID` | 批次字段、商品或请求量无效 |
 | 401 | `AUTH_REQUIRED` | 未登录或 Session 无效 |
 | 401 | `INVALID_CREDENTIALS` | 登录凭据错误 |
 | 403 | `ACCOUNT_DISABLED` | 登录账号已禁用 |
 | 403 | `CSRF_INVALID` | CSRF Token 缺失或错误 |
-| 403 | `LAB_NOT_OWNED` | 实验或实例不属于当前用户 |
 | 404 | `COURSE_NOT_FOUND` | 课程不存在 |
 | 404 | `LAB_NOT_FOUND` | 实验不存在 |
-| 404 | `INSTANCE_NOT_FOUND` | 实例不存在 |
 | 409 | `LAB_ALREADY_ACTIVE` | 当前账户已有活动实验 |
 | 409 | `LAB_BUSY` | 同一实验存在串行拓扑操作 |
 | 409 | `MIN_INSTANCE_LIMIT` | 删除后会低于最少实例数 |
 | 409 | `MAX_INSTANCE_LIMIT` | 增加后会超过最多实例数 |
 | 422 | `ACTION_NOT_ALLOWED` | 动作不在场景白名单中 |
-| 429 | `LOGIN_RATE_LIMITED` | 登录尝试频率过高 |
-| 503 | `RESOURCE_CAPACITY_EXCEEDED` | 宿主机或平台配额不足 |
-| 503 | `DOCKER_UNAVAILABLE` | Docker 控制面不可用 |
-| 503 | `NGINX_CONFIG_INVALID` | 新 upstream 配置校验失败 |
+| 429 | `RATE_LIMITED` | 触发平台统一 HTTP 限流 |
+| 503 | `LAB_UNAVAILABLE` | 实验网关、实例、内部超时或响应校验失败 |
 
 认证、课程和当前实验占位端点的状态映射已经写入 OpenAPI。
 后续实验错误码仍将在对应阶段继续补充。
@@ -1049,10 +990,10 @@ GET /api/v1/operations/:operationId
 - 仅对仍标记为 `planned` 的实验端点使用 Mock。
 - 把所有枚举集中定义，不在组件中散落字符串。
 - 所有实验异步变更先返回 `202` 和 `pending` Operation。
-- 通过模拟 SSE 把 Operation 更新为 `running` 和 `succeeded`。
-- 模拟 `AUTH_REQUIRED`、`LAB_BUSY` 和资源不足等稳定错误码。
+- 通过轮询实验快照把 Operation 更新为 `running` 和 `succeeded`。
+- 模拟 `AUTH_REQUIRED`、`LAB_NOT_RUNNING`、`RATE_LIMITED` 和 `LAB_UNAVAILABLE` 等稳定错误码。
 - 页面刷新时先加载 `auth/me`，再加载活动实验快照。
-- SSE 只更新局部状态，完整快照仍作为最终恢复依据。
+- 同步批次响应只更新当前小球和实例颜色，完整快照仍作为最终恢复依据。
 
 前端类型建议按资源拆分：
 
@@ -1064,7 +1005,7 @@ AuthenticatedUser
 LabSnapshot
 LabInstance
 LabOperation
-LabEvent
+TrafficBatchResult
 ApiError
 ```
 
@@ -1088,7 +1029,7 @@ Proxy。
 
 | Source ID | 来源 | 用途 | 置信度 |
 | --- | --- | --- | --- |
-| `SRC-DOC-001` | `2026-07-12` SDS | URL、状态机、动作、SSE 和数据模型 | 高 |
+| `SRC-DOC-001` | `2026-07-12` SDS | URL、状态机、动作、批次响应和数据模型 | 高 |
 | `SRC-DOC-002` | `2026-07-11` SRS | 权限、错误码、业务限制和验收语义 | 高 |
 | `SRC-API-001` | `platform-api.openapi.yaml` | 当前保留路径和实现阶段 | 高 |
 | `SRC-CODE-001` | Platform API Router | 当前真实可用响应 | 高 |
@@ -1108,8 +1049,6 @@ Proxy。
 4. 缓存实验场景、保护策略和故障触发动作枚举。
 5. DELETE 请求的 `operationId` 放在 Body 还是 Header。
 6. 是否增加独立 Operation 查询端点。
-7. 页面刷新后 SSE 补发使用 Header 还是 Query 参数。
-8. SSE 事件类型、事件保留数量和补发时间窗口。
-9. `auth/me` 是否在实验阶段增加 `activeLabId`。
+7. `auth/me` 是否在实验阶段增加 `activeLabId`。
 
 每个实验阶段完成后都应同步更新 OpenAPI，并继续以 OpenAPI 作为前后端正式契约。

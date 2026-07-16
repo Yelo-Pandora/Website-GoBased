@@ -81,7 +81,7 @@ flowchart TB
 ### 4.2 分层职责
 
 访问层由 Vue SPA 和公网入口 Nginx 构成。
-它负责页面、登录、理论内容、实验动作发起和 SSE 消费。
+它负责页面、登录、理论内容、实验动作发起和同步批次结果消费。
 
 平台控制层由模块化单体 `platform-api` 构成。
 它负责决定“应该发生什么”，但不直接操作 Docker、实验数据库 DDL 或 Nginx 文件。
@@ -98,7 +98,7 @@ flowchart TB
 
 * `edge-net`：连接公网入口 Nginx 与 `platform-api`
 * `platform-data-net`：连接 `platform-api` 与共享 MySQL
-* `lab-control-net`：连接流量生成模块与实验 Nginx
+* `lab-control-net`：连接 `platform-api` 同步批次代理与实验 Nginx
 * `orchestration-net`：只连接 `orchestrator` 与 Docker Socket Proxy
 * `db-admin-net`：只连接 `orchestrator` 与共享 MySQL 的管理入口
 
@@ -127,15 +127,14 @@ Edge Nginx 是唯一公网入口。
 
 ~~~mermaid
 flowchart TB
-    HTTP["HTTP Router / SSE Router"]
+    HTTP["HTTP Router"]
     Auth["Auth Service"]
     Course["Course Service"]
     Lab["Lab Session Service"]
     Action["Action Coordinator"]
     Queue["Operation Queue Worker"]
-    Traffic["Traffic Generator"]
+    Traffic["Synchronous Traffic Proxy"]
     Adaptive["Adaptive Balancer"]
-    Event["Event Hub"]
     Scheduler["Lifecycle Scheduler"]
     Repo["Repositories"]
 
@@ -143,12 +142,10 @@ flowchart TB
     HTTP --> Course
     HTTP --> Lab
     HTTP --> Action
-    HTTP --> Event
+    HTTP --> Traffic
     Action --> Repo
     Action --> Queue
-    Action --> Event
     Queue --> Lab
-    Queue --> Traffic
     Queue --> Adaptive
     Queue --> Repo
     Scheduler --> Action
@@ -211,11 +208,14 @@ Worker 使用租约领取任务。
 队列采用“至少一次执行”语义。
 所有基础设施命令必须使用 `operationId` 和资源标签实现幂等，不能假定任务只执行一次。
 
-### 5.7 Traffic Generator
+### 5.7 Synchronous Traffic Proxy
 
-Traffic Generator 是 `platform-api` 内部有界后台任务。
-它以低真实速率向实验 Nginx 发送请求，并为每个请求附加教学等效订单批次。
-它不独立部署，也不得无限创建 goroutine。
+同步批次代理由 `platform-api` 的 `internal/traffic` 提供。
+浏览器按本地定时器生成批次，调用 `POST /api/v1/labs/:id/traffic-batches`。
+代理校验 Session、CSRF、实验归属、场景模板范围和统一 HTTP 限流后，
+通过固定的内部实验网关同步转发请求，并验证实际应用实例返回的 `batchId`、
+`labId`、`targetInstanceId`、处理数量和负载状态。
+批次不进入持久操作队列，不由后台 goroutine 周期性生成。
 
 ### 5.8 Adaptive Balancer
 
@@ -224,11 +224,12 @@ Adaptive Balancer 每两秒读取实例容量和负载快照。
 固定模式下不自动调整权重。
 自适应模式下按有效容量生成目标 upstream 模型。
 
-### 5.9 Event Hub
+### 5.9 实时状态恢复
 
-Event Hub 为每个实验维护有界内存事件环。
-它负责递增事件序号、SSE 广播和短期补发。
-高频事件不逐条写入 MySQL。
+MVP 不提供 SSE、Event Hub 或事件环。
+同步批次结果直接驱动请求动画和实例颜色。
+创建、重置、结束等异步控制操作通过 `GET /api/v1/labs/:id` 轮询恢复状态。
+实验快照返回拓扑、实例状态、容量策略、过期时间和最新操作，作为页面刷新后的事实来源。
 
 ### 5.10 Lifecycle Scheduler
 
@@ -252,9 +253,9 @@ Lifecycle Scheduler 负责：
 * `POST /api/v1/labs`
 * `GET /api/v1/labs/:id`
 * `POST /api/v1/labs/:id/actions`
+* `POST /api/v1/labs/:id/traffic-batches`
 * `POST /api/v1/labs/:id/reset`
 * `DELETE /api/v1/labs/:id`
-* `GET /api/v1/labs/:id/events`
 
 部署和诊断端点单独提供：
 
@@ -265,17 +266,8 @@ Lifecycle Scheduler 负责：
 `/healthz` 用于容器和入口存活检查，不写入 Swagger UI 的业务接口清单。
 实验创建、拓扑调整和生命周期变更请求必须包含唯一 `operationId`。
 具体实验动作还应包含动作类型、可选目标实例和受限参数对象。
-耗时动作返回 `202 Accepted`，完成状态通过查询接口和 SSE 获取。
-
-SSE 事件统一包含：
-
-* `eventId`
-* `labId`
-* `eventType`
-* `occurredAt`
-* `payload`
-
-浏览器断线重连时，必须先获取完整实验快照，再使用最后事件序号继续订阅。
+耗时动作返回 `202 Accepted`，完成状态通过查询接口和轮询获取。
+批次接口同步返回 `200 OK`，包括全部丢弃的正常业务结果。
 
 ## 6. orchestrator 设计
 
@@ -630,7 +622,7 @@ erDiagram
 * 模板产生：由创建实验时选定的不可变版本模板产生。
 * 系统生成：由平台、编排器或实验应用根据运行身份产生。
 * 运行时计算：根据模板值、用户动作或请求内容计算产生。
-* 请求产生：由流量生成器或用户请求携带。
+* 请求产生：由前端批次请求或用户操作携带。
 
 实验数据库不得为了记录来源而增加 `value_source` 一类字段。
 来源规则属于 SDS 和模板契约，由初始化、运行时逻辑和测试保证。
@@ -1019,7 +1011,7 @@ sequenceDiagram
 3. Worker 调用 `CREATE_APP_INSTANCE`。
 4. 编排器创建容器并等待健康检查。
 5. 编排器更新 Nginx 片段。
-6. 平台保存实例快照并推送 SSE。
+6. 平台保存实例快照，前端通过后续快照轮询获取状态变化。
 
 ### 13.3 调整性能
 
