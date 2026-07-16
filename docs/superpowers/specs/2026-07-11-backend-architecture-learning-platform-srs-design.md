@@ -155,7 +155,7 @@ MySQL、入口、平台后端、编排服务、流量生成器和实验Nginx共�
 | R15 | 应用与数据分离实验 | functional | 系统应提供一个用户专属Go应用容器连接共享MySQL的应用与数据分离实验。 | 已登录用户启动该实验。约束：实验数据必须按sessionId隔离。 | 系统创建应用容器、实验网络和数据库访问配置。 验收：给定实验启动成功，商品查询真实经过应用容器访问共享MySQL。 | SRC-CLI-001, SRC-CLI-002 | accepted |
 | R16 | 负载均衡实验初始拓扑 | functional | 负载均衡实验应从一台临时Go应用实例开始，并通过内部Nginx转发请求。 | 已登录用户启动负载均衡实验。约束：实验Nginx应与公网入口Nginx分离。 | 系统创建初始实例并注册内部upstream。 验收：给定实验启动成功，真实请求由内部Nginx转发至初始实例。 | SRC-CLI-001, SRC-CLI-002 | accepted |
 | R17 | 增加应用实例 | functional | 用户应能按预设操作增加应用实例，单实验最多四台。 | 实验运行中；平台资源充足。约束：镜像、网络和资源规格由后端模板固定。 | 系统创建实例、健康检查通过后加入upstream。 验收：给定实例数少于四且容量允许，扩容后新实例可处理真实请求。 | SRC-CLI-001, SRC-CLI-002 | accepted |
-| R18 | 删除指定实例 | functional | 用户应能删除指定应用实例，但集群最低保留一台。 | 目标实例属于当前实验。约束：删除前必须从upstream摘除并短暂排空请求。 | 系统安全删除目标容器并更新拓扑。 验收：给定集群有两台以上实例，指定实例可删除；只剩一台时返回ACTION_NOT_ALLOWED。 | SRC-CLI-002 | accepted |
+| R18 | 删除指定实例 | functional | 用户应能删除指定应用实例，但集群最低保留一台。 | 目标实例属于当前实验。约束：删除前必须从upstream摘除并短暂排空请求。 | 系统安全删除目标容器并更新拓扑。 验收：给定集群有两台以上实例，指定实例可删除；只剩一台时返回MIN_INSTANCE_LIMIT。 | SRC-CLI-002 | accepted |
 | R19 | 动态降低实例性能 | functional | 用户应能选择实例并将性能保留比例设置为20%至100%。 | 目标实例属于当前运行实验。约束：后端必须真实修改Docker CPU配额并同步教学等效容量。 | 系统更新CPU限制、容量、指标和前端状态。 验收：给定app-3设置为30%，Docker配额和有效容量均反映30%的保留性能。 | SRC-CLI-002 | accepted |
 | R20 | 恢复实例性能 | functional | 用户应能将指定实例恢复为场景初始性能。 | 实例性能低于初始值。约束：恢复后不得超过场景模板定义的上限。 | 系统恢复Docker配额和有效容量。 验收：给定降级实例执行恢复，性能比例回到100%且指标随之更新。 | SRC-CLI-002 | accepted |
 | R21 | 固定权重模式 | functional | 固定权重模式下，实例性能变化不得自动修改Nginx权重。 | 用户选择固定模式。约束：系统仍需更新容量、负载和过载指标。 | Nginx继续使用当前权重，允许用户观察不均衡。 验收：给定固定模式下实例降级，权重不变且该实例可能出现过载。 | SRC-CLI-002 | accepted |
@@ -177,12 +177,12 @@ MySQL、入口、平台后端、编排服务、流量生成器和实验Nginx共�
 | R37 | 引导式操作白名单 | constraint | 实验只允许后端定义的引导式动作，不允许任意命令、配置或代码。 | 用户提交实验动作。约束：场景动作必须位于白名单且参数满足范围。 | 系统执行允许动作或返回ACTION_NOT_ALLOWED。 验收：给定用户提交未知动作或原始Docker参数，平台和编排层均拒绝。 | SRC-CLI-002 | accepted |
 | R38 | 受限内部编排 | constraint | Go平台后端应通过内部编排服务和受限Docker Socket代理管理实验资源。 | 需要创建、修改或删除实验资源。约束：编排接口和Socket代理不得暴露到公网。 | 编排服务根据固定模板调用必要的Docker API。 验收：给定公网请求，无法直接访问编排服务或Docker API。 | SRC-CLI-002 | accepted |
 | R39 | 容器与网络隔离 | non_functional | 临时容器应采用非root、非特权、无宿主机挂载、只读根文件系统和会话网络隔离。 | 编排服务创建临时容器。约束：容器不得访问Docker Socket或公开宿主机端口。 | 系统应用CPU、内存、PID、capability和网络限制。 验收：给定任一实验容器，其检查结果符合固定安全模板且不能访问其他会话网络。 | SRC-CLI-002 | accepted |
-| R40 | 资源配额与准入 | non_functional | 系统应在创建资源前检查会话配额、全局临时容器上限和宿主机余量。 | 用户请求创建或扩容。约束：目标是在正常测试期间保留至少1 GB可用内存。 | 容量足够时创建；不足时返回LAB_UNAVAILABLE。 验收：给定达到全局上限，新的扩容请求被拒绝且不创建部分资源。 | SRC-CLI-001, SRC-CLI-002 | accepted |
-| R41 | 幂等与串行拓扑变更 | non_functional | 状态变更应使用operationId实现幂等，并对同一实验的拓扑变更串行执行。 | 浏览器重试或并发提交实验动作。约束：同一operationId不得重复产生副作用。 | 相同operationId返回原结果，不同操作进入同一实验的持久队列。 验收：给定相同扩容请求重复提交，最终只新增一个实例。 | SRC-CLI-002 | accepted |
+| R40 | 资源配额与准入 | non_functional | 系统应在创建资源前检查会话配额、全局临时容器上限和宿主机余量。 | 用户请求创建或扩容。约束：目标是在正常测试期间保留至少1 GB可用内存。 | 容量足够时创建；不足时返回RESOURCE_CAPACITY_EXCEEDED。 验收：给定达到全局上限，新的扩容请求被拒绝且不创建部分资源。 | SRC-CLI-001, SRC-CLI-002 | accepted |
+| R41 | 幂等与串行拓扑变更 | non_functional | 状态变更应使用operationId实现幂等，并对同一实验的拓扑变更串行执行。 | 浏览器重试或并发提交实验动作。约束：同一operationId不得重复产生副作用。 | 系统返回原结果或LAB_BUSY，不重复创建资源。 验收：给定相同扩容请求重复提交，最终只新增一个实例。 | SRC-CLI-002 | accepted |
 | R42 | 安全更新Nginx配置 | non_functional | 动态Nginx配置应由结构化数据生成，校验后原子替换并优雅重载。 | 实例、权重或健康状态变化。约束：用户输入不得直接拼接到配置；失败时保留上一份有效配置。 | 系统执行nginx -t，成功后重载，失败时回滚。 验收：给定无效生成配置，当前流量继续使用上一份有效upstream。 | SRC-CLI-002 | accepted |
 | R43 | 持久与高频数据分离 | data_rule | MySQL应保存账号、进度、会话、实例清单和操作摘要，高频指标应使用有界内存缓冲。 | 系统产生平台数据或实验事件。约束：不得逐条持久化模拟订单、缓存命中和指标采样。 | 系统持久化低频数据并聚合高频数据。 验收：给定持续实验流量，MySQL记录量按摘要增长而非按每个等效订单增长。 | SRC-CLI-002 | accepted |
 | R44 | SSE实时状态 | functional | 系统应通过SSE推送容器、请求、权重、负载、订单丢失、缓存和倒计时事件。 | 用户拥有活动实验。约束：断线重连前应先获取完整状态快照。 | 系统推送递增事件序号并支持有限补发。 验收：给定浏览器断线重连，页面先恢复快照，再继续接收新事件。 | SRC-CLI-002 | accepted |
-| R45 | 稳定错误码与降级 | functional | 系统应使用精简稳定的业务错误码，不向前端暴露Docker、Nginx、Redis或MySQL等内部故障分类。 | 操作无法安全完成。约束：前端不得依赖解析内部错误字符串。 | 归属问题折叠为LAB_NOT_FOUND，规则限制返回ACTION_NOT_ALLOWED，实验基础设施故障统一返回LAB_UNAVAILABLE。 验收：给定Docker不可用，新实验返回LAB_UNAVAILABLE而理论内容仍可访问。 | SRC-CLI-002 | accepted |
+| R45 | 稳定错误码与降级 | functional | 系统应为认证、归属、配额、Docker、容器、Nginx、Redis、MySQL和实验状态错误返回稳定业务错误码。 | 操作无法安全完成。约束：前端不得依赖解析内部错误字符串。 | 系统返回可识别错误码，且理论页面在实验基础设施故障时仍可用。 验收：给定Docker不可用，新实验返回DOCKER_UNAVAILABLE而理论内容仍可访问。 | SRC-CLI-002 | accepted |
 | R46 | 失败回滚与资源核对 | non_functional | 实验创建失败、平台重启或会话过期时，系统应回滚或核对带平台标签的资源。 | 部分创建失败、平台启动或后台清理周期触发。约束：清理器只能删除带平台实验标签的资源。 | 系统删除孤儿容器、网络和无效动态路由并修复会话状态。 验收：给定创建到一半失败，已创建资源被反向清理且不会影响基础容器。 | SRC-CLI-002 | accepted |
 | R47 | 容量与性能目标 | non_functional | MVP应支持最多10名同时在线测试用户，并满足已批准的轻量响应目标。 | 运行在单台4核8G服务器；网络和基础服务正常。约束：容器启动和Nginx重载不计入普通API目标。 | 系统在资源准入范围内保持可用且避免宿主机OOM。 验收：给定不超过10名测试用户，理论与普通API达到目标且宿主机不发生OOM。 | SRC-CLI-001, SRC-CLI-002 | accepted |
 | R48 | 访问终端与部署约束 | constraint | MVP应以桌面版Chrome、Edge和Firefox为主要客户端，并暂时通过公网IP和HTTP访问。 | 用户访问MVP。约束：不要求手机端完整实验体验；HTTPS列为后续优先改进。 | 系统在支持的桌面浏览器提供完整实验能力。 验收：给定受支持桌面浏览器，理论、登录、SSE和实验控制可正常使用。 | SRC-CLI-001, SRC-CLI-002 | accepted |
@@ -218,13 +218,10 @@ GET /api/v1/system/info
 
 `/healthz`用于容器和入口存活检查，不纳入Swagger UI的人工业务验收范围。
 实验创建、拓扑调整和生命周期变更请求必须携带唯一operationId。
-错误响应使用精简稳定的业务错误码，包括VALIDATION_FAILED、AUTH_REQUIRED、
-INVALID_CREDENTIALS、ACCOUNT_DISABLED、CSRF_INVALID、COURSE_NOT_FOUND、
-LAB_NOT_FOUND、LAB_ALREADY_ACTIVE、ACTION_NOT_ALLOWED、LOGIN_RATE_LIMITED、
-LAB_UNAVAILABLE和INTERNAL_ERROR。
-实验不存在和归属校验失败统一返回LAB_NOT_FOUND；实例上下限和场景规则限制统一返回
-ACTION_NOT_ALLOWED；容量和运行基础设施故障统一返回LAB_UNAVAILABLE。
-同一实验的不同操作进入持久队列串行执行，不使用LAB_BUSY作为对外错误码。
+错误响应使用稳定业务错误码，包括AUTH_REQUIRED、LAB_NOT_OWNED、
+LAB_ALREADY_ACTIVE、MIN_INSTANCE_LIMIT、MAX_INSTANCE_LIMIT、
+RESOURCE_CAPACITY_EXCEEDED、DOCKER_UNAVAILABLE、
+NGINX_CONFIG_INVALID和LAB_BUSY。
 
 ## 10. 数据需求
 

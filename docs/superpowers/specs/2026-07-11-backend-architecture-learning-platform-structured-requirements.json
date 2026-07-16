@@ -3,7 +3,7 @@
   "project_name": "Backend Architecture Learning Platform",
   "feature_id": "backend_architecture_learning_platform_mvp",
   "feature_name": "互联网后端架构学习平台MVP",
-  "source_path": "2026-07-10 initial user request and architecture image; 2026-07-10 to 2026-07-11 approved clarification dialogue; 2026-07-15 authentication and course progress scope amendment; 2026-07-16 MVP error contract simplification",
+  "source_path": "2026-07-10 initial user request and architecture image; 2026-07-10 to 2026-07-11 approved clarification dialogue; 2026-07-15 authentication and course progress scope amendment",
   "actors": [
     "visitor",
     "test_user",
@@ -31,10 +31,11 @@
   ],
   "error_conditions": [
     "Authentication or CSRF validation fails.",
-    "The requested course or lab is unavailable to the current user.",
-    "A requested action is not valid for the current scenario, target, or instance limit.",
-    "Lab capacity or runtime infrastructure is unavailable.",
-    "A duplicate operation must return its original result without repeating side effects."
+    "The requested lab or instance belongs to another user.",
+    "An instance or global resource limit is reached.",
+    "Docker, Nginx, Redis, or MySQL is unavailable.",
+    "A requested action is not valid for the current scenario or state.",
+    "A duplicate or concurrent topology operation cannot be safely executed."
   ],
   "requirement_items": [
     {
@@ -317,7 +318,7 @@
       "expected_actions": [
         "系统安全删除目标容器并更新拓扑。"
       ],
-      "notes": "Title: 删除指定实例. Source: SRC-CLI-002. Type: functional. Confidence: high. Status: accepted. Constraints: 删除前必须从upstream摘除并短暂排空请求. Acceptance candidate: 给定集群有两台以上实例，指定实例可删除；只剩一台时返回ACTION_NOT_ALLOWED。"
+      "notes": "Title: 删除指定实例. Source: SRC-CLI-002. Type: functional. Confidence: high. Status: accepted. Constraints: 删除前必须从upstream摘除并短暂排空请求. Acceptance candidate: 给定集群有两台以上实例，指定实例可删除；只剩一台时返回MIN_INSTANCE_LIMIT。"
     },
     {
       "id": "R19",
@@ -685,7 +686,7 @@
         "用户请求创建或扩容"
       ],
       "expected_actions": [
-        "容量足够时创建；不足时返回LAB_UNAVAILABLE。"
+        "容量足够时创建；不足时返回RESOURCE_CAPACITY_EXCEEDED。"
       ],
       "notes": "Title: 资源配额与准入. Source: SRC-CLI-001, SRC-CLI-002. Type: non_functional. Confidence: high. Status: accepted. Constraints: 目标是在正常测试期间保留至少1 GB可用内存. Acceptance candidate: 给定达到全局上限，新的扩容请求被拒绝且不创建部分资源。"
     },
@@ -700,7 +701,7 @@
         "浏览器重试或并发提交实验动作"
       ],
       "expected_actions": [
-        "相同operationId返回原结果，不同操作进入同一实验的持久队列。"
+        "系统返回原结果或LAB_BUSY，不重复创建资源。"
       ],
       "notes": "Title: 幂等与串行拓扑变更. Source: SRC-CLI-002. Type: non_functional. Confidence: high. Status: accepted. Constraints: 同一operationId不得重复产生副作用. Acceptance candidate: 给定相同扩容请求重复提交，最终只新增一个实例。"
     },
@@ -755,16 +756,16 @@
     },
     {
       "id": "R45",
-      "description": "系统应使用精简稳定的业务错误码，不向前端暴露具体基础设施故障分类。",
+      "description": "系统应为认证、归属、配额、Docker、容器、Nginx、Redis、MySQL和实验状态错误返回稳定业务错误码。",
       "input_fields": [],
       "data_ranges": [],
       "conditions": [
         "操作无法安全完成"
       ],
       "expected_actions": [
-        "归属问题折叠为LAB_NOT_FOUND，规则限制返回ACTION_NOT_ALLOWED，实验基础设施故障统一返回LAB_UNAVAILABLE。"
+        "系统返回可识别错误码，且理论页面在实验基础设施故障时仍可用。"
       ],
-      "notes": "Title: 稳定错误码与降级. Source: SRC-CLI-002. Type: functional. Confidence: high. Status: accepted. Constraints: 前端不得依赖解析内部错误字符串. Acceptance candidate: 给定Docker不可用，新实验返回LAB_UNAVAILABLE而理论内容仍可访问。"
+      "notes": "Title: 稳定错误码与降级. Source: SRC-CLI-002. Type: functional. Confidence: high. Status: accepted. Constraints: 前端不得依赖解析内部错误字符串. Acceptance candidate: 给定Docker不可用，新实验返回DOCKER_UNAVAILABLE而理论内容仍可访问。"
     },
     {
       "id": "R46",
