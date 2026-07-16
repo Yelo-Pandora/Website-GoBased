@@ -1,13 +1,30 @@
 package uds
 
 import (
+	"context"
 	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"website-gobased/internal/protocol"
 )
+
+type commandExecutorStub struct{}
+
+func (commandExecutorStub) Execute(
+	_ context.Context,
+	command protocol.Command,
+) protocol.CommandResponse {
+	return protocol.CommandResponse{
+		CommandID:   command.CommandID,
+		OperationID: command.OperationID,
+		Status:      "succeeded",
+		Result:      map[string]bool{"executed": true},
+	}
+}
 
 func TestCommandRoute(t *testing.T) {
 	tests := []struct {
@@ -26,7 +43,7 @@ func TestCommandRoute(t *testing.T) {
 			wantStatus: http.StatusBadRequest,
 		},
 		{
-			name: "valid scaffold command",
+			name: "valid command",
 			body: `{
 				"commandType":"PROVISION_LAB",
 				"commandId":"cmd-1",
@@ -34,13 +51,16 @@ func TestCommandRoute(t *testing.T) {
 				"labId":"lab-test",
 				"requestedBy":"user-1"
 			}`,
-			wantStatus: http.StatusNotImplemented,
+			wantStatus: http.StatusOK,
 		},
 	}
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			router := newRouter(slog.New(slog.NewTextHandler(io.Discard, nil)))
+			router := newRouter(
+				slog.New(slog.NewTextHandler(io.Discard, nil)),
+				commandExecutorStub{},
+			)
 			request := httptest.NewRequest(
 				http.MethodPost,
 				"/v1/commands",

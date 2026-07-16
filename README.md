@@ -1,7 +1,8 @@
 # 互联网后端架构学习平台
 
-本仓库是互联网后端架构学习平台的基础工程。
-当前阶段提供可构建、可启动、可健康检查的容器化脚手架，尚未实现完整课程和实验业务。
+本仓库是互联网后端架构学习平台的后端 MVP 工程。
+当前已经实现课程、认证、学习进度、实验控制面基础和受限资源编排。
+浏览器侧实验闭环仍将在后续阶段开放。
 
 ## 基础组件
 
@@ -44,3 +45,7 @@ curl --fail http://127.0.0.1:8080/readyz
 
 前端预期 API、JSON 示例和待确认契约见
 [`docs/frontend-api-integration-guide.md`](docs/frontend-api-integration-guide.md)。
+
+实验控制面和安全编排器边界分别见
+[`docs/lab-control-foundation-guide.md`](docs/lab-control-foundation-guide.md) 与
+[`docs/secure-orchestrator-guide.md`](docs/secure-orchestrator-guide.md)。

@@ -85,7 +85,7 @@ lab_operations
 客户端限制请求目标、响应大小、内容类型、命令状态，并核对 commandId 和 operationId。
 它不接受 TCP 地址，也不会向公网发送编排命令。
 
-当前 orchestrator 仍会返回 `501 COMMAND_NOT_IMPLEMENTED`。运行验收确认该拒绝会被保存为：
+阶段四之前，orchestrator 会返回 `501 COMMAND_NOT_IMPLEMENTED`，并由 Worker 将拒绝保存为：
 
 ```text
 lab_operations.status = failed
@@ -93,7 +93,9 @@ lab_operations.error_code = COMMAND_NOT_IMPLEMENTED
 lab_sessions.status = Failed
 ```
 
-该结果用于证明控制链已经真实接通，不表示实验资源已创建。
+该历史结果用于证明阶段三控制链已经真实接通，不表示实验资源已创建。
+阶段四已经用结构化命令执行替换该占位响应，详见
+[`secure-orchestrator-guide.md`](secure-orchestrator-guide.md)。
 
 ## 7. 配置
 
@@ -111,6 +113,6 @@ lab_sessions.status = Failed
 
 ## 8. 下一阶段入口
 
-阶段四将在 orchestrator 内实现命令白名单、模板注册表、Docker 适配器、实验数据库适配器、
-Nginx 配置管理、补偿和资源核对。完成这些能力后，阶段五再开放实验创建和快照接口，形成
-应用与数据分离实验的第一条端到端闭环。
+阶段四已经在 orchestrator 内实现命令白名单、模板注册表、Docker 适配器、实验数据库适配器、
+Nginx 配置管理、补偿和资源核对。
+阶段五将开放实验创建和快照接口，形成应用与数据分离实验的第一条端到端闭环。

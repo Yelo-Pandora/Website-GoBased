@@ -1,6 +1,7 @@
 package uds
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"io"
@@ -14,11 +15,16 @@ import (
 )
 
 type handler struct {
-	logger *slog.Logger
+	logger   *slog.Logger
+	executor commandExecutor
 }
 
-func newHandler(logger *slog.Logger) *handler {
-	return &handler{logger: logger}
+type commandExecutor interface {
+	Execute(ctx context.Context, command protocol.Command) protocol.CommandResponse
+}
+
+func newHandler(logger *slog.Logger, executor commandExecutor) *handler {
+	return &handler{logger: logger, executor: executor}
 }
 
 func (h *handler) health(ctx *gin.Context) {
@@ -65,13 +71,12 @@ func (h *handler) command(ctx *gin.Context) {
 		return
 	}
 
-	writeCommandError(
-		ctx,
-		http.StatusNotImplemented,
-		command,
-		"COMMAND_NOT_IMPLEMENTED",
-		"command execution is not implemented in the foundation scaffold",
-	)
+	response := h.executor.Execute(ctx.Request.Context(), command)
+	statusCode := http.StatusOK
+	if response.Status == "rejected" {
+		statusCode = http.StatusUnprocessableEntity
+	}
+	ctx.JSON(statusCode, response)
 }
 
 func ensureJSONBodyConsumed(decoder *json.Decoder) error {

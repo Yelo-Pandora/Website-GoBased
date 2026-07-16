@@ -6,6 +6,7 @@ Socket Proxy 是唯一挂载宿主机 Docker Socket 的常驻容器。
 Compose 仅开启以下 API 类别：
 
 * `CONTAINERS`
+* `DELETE`
 * `EXEC`
 * `IMAGES`
 * `INFO`
@@ -14,5 +15,6 @@ Compose 仅开启以下 API 类别：
 * `VERSION`
 * 受控的容器启动、停止和重启操作
 
-写操作需要 `POST=1`。
+创建、启动、更新、连接和 exec 操作需要 `POST=1`，受标签资源清理需要
+`DELETE=1`。
 该开关仍然具有较高权限，因此编排器必须继续执行模板白名单、参数校验和资源标签校验。

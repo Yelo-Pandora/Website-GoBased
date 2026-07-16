@@ -156,6 +156,16 @@ CREATE TABLE IF NOT EXISTS lab_resources (
     FOREIGN KEY (lab_id) REFERENCES lab_sessions (id) ON DELETE CASCADE
 ) ENGINE=InnoDB;
 
+CREATE TABLE IF NOT EXISTS orchestrator_lab_databases (
+  database_name VARCHAR(64) NOT NULL,
+  database_user VARCHAR(64) NOT NULL,
+  created_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+  updated_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6)
+    ON UPDATE CURRENT_TIMESTAMP(6),
+  PRIMARY KEY (database_name),
+  UNIQUE KEY uk_orchestrator_lab_databases_user (database_user)
+) ENGINE=InnoDB;
+
 CREATE TABLE IF NOT EXISTS lab_operations (
   id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
   operation_id VARCHAR(64) NOT NULL,

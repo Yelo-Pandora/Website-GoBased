@@ -14,8 +14,11 @@
     "--maxmemory-policy",
     "allkeys-lru"
   ],
+  "user": "redis",
   "publishPorts": false,
   "readOnlyRootFilesystem": true,
+  "privileged": false,
+  "capDrop": ["ALL"],
   "memoryLimitMb": 64,
   "pidsLimit": 32
 }

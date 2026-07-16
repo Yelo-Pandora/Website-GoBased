@@ -21,7 +21,12 @@ import (
 const maxCommandBodyBytes = 1 << 20
 
 // Run listens on a Unix Domain Socket until the context is canceled.
-func Run(ctx context.Context, socketPath string, logger *slog.Logger) error {
+func Run(
+	ctx context.Context,
+	socketPath string,
+	logger *slog.Logger,
+	executor commandExecutor,
+) error {
 	listener, err := listen(socketPath)
 	if err != nil {
 		return err
@@ -30,7 +35,7 @@ func Run(ctx context.Context, socketPath string, logger *slog.Logger) error {
 	defer os.Remove(socketPath)
 
 	server := &http.Server{
-		Handler:           newRouter(logger),
+		Handler:           newRouter(logger, executor),
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       10 * time.Second,
 		WriteTimeout:      30 * time.Second,
@@ -116,8 +121,8 @@ func listen(socketPath string) (net.Listener, error) {
 	return listener, nil
 }
 
-func newRouter(logger *slog.Logger) *gin.Engine {
-	handler := newHandler(logger)
+func newRouter(logger *slog.Logger, executor commandExecutor) *gin.Engine {
+	handler := newHandler(logger, executor)
 	router := httpserver.NewRouter(logger)
 	router.GET("/healthz", handler.health)
 	router.POST("/v1/commands", handler.command)

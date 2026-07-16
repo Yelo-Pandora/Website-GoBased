@@ -1,16 +1,18 @@
-upstream lab_${labId} {
-  ${upstreamServers}
+upstream lab_{{.NormalizedLabID}} {
+{{range .Servers}}
+  server {{.Host}}:{{.Port}} weight={{.Weight}};
+{{end}}
 }
 
 server {
   listen 8080;
-  server_name ${labId}.lab.internal;
+  server_name {{.LabID}}.lab.internal;
 
   location / {
     proxy_http_version 1.1;
     proxy_set_header Host $host;
-    proxy_set_header X-Lab-ID ${labId};
+    proxy_set_header X-Lab-ID {{.LabID}};
     proxy_set_header X-Request-ID $request_id;
-    proxy_pass http://lab_${labId};
+    proxy_pass http://lab_{{.NormalizedLabID}};
   }
 }

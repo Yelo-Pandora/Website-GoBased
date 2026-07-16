@@ -15,7 +15,11 @@ import (
 
 func main() {
 	logger := logging.New("orchestrator")
-	cfg := app.LoadConfig()
+	cfg, err := app.LoadConfig()
+	if err != nil {
+		logger.Error("load configuration", "error", err)
+		os.Exit(1)
+	}
 
 	if len(os.Args) > 1 && os.Args[1] == "healthcheck" {
 		runHealthcheck(cfg.SocketPath, logger)
@@ -28,7 +32,7 @@ func main() {
 		syscall.SIGTERM,
 	)
 	defer stop()
-	if err := uds.Run(ctx, cfg.SocketPath, logger); err != nil {
+	if err := app.Run(ctx, cfg, logger); err != nil {
 		logger.LogAttrs(ctx, slog.LevelError, "orchestrator stopped", slog.Any("error", err))
 		os.Exit(1)
 	}

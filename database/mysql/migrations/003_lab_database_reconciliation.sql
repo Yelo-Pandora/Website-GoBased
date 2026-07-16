@@ -1,7 +1,16 @@
 USE platform;
 
+CREATE TABLE IF NOT EXISTS orchestrator_lab_databases (
+  database_name VARCHAR(64) NOT NULL,
+  database_user VARCHAR(64) NOT NULL,
+  created_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+  updated_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6)
+    ON UPDATE CURRENT_TIMESTAMP(6),
+  PRIMARY KEY (database_name),
+  UNIQUE KEY uk_orchestrator_lab_databases_user (database_user)
+) ENGINE=InnoDB;
+
 DROP PROCEDURE IF EXISTS provision_lab_database;
-DROP PROCEDURE IF EXISTS reset_lab_database;
 DROP PROCEDURE IF EXISTS destroy_lab_database;
 DROP PROCEDURE IF EXISTS list_lab_databases;
 DROP PROCEDURE IF EXISTS list_expected_lab_ids;
@@ -145,43 +154,6 @@ BEGIN
     p_database_user
   ) ON DUPLICATE KEY UPDATE
     database_user = VALUES(database_user);
-END$$
-
-CREATE PROCEDURE reset_lab_database(
-  IN p_database_name VARCHAR(64)
-)
-SQL SECURITY DEFINER
-BEGIN
-  IF p_database_name NOT REGEXP '^lab_[a-z0-9]{4,32}$' THEN
-    SIGNAL SQLSTATE '45000'
-      SET MESSAGE_TEXT = 'invalid lab database name';
-  END IF;
-
-  SET @sql_text = CONCAT('DELETE FROM `', p_database_name, '`.order_stats');
-  PREPARE statement_handle FROM @sql_text;
-  EXECUTE statement_handle;
-  DEALLOCATE PREPARE statement_handle;
-
-  SET @sql_text = CONCAT('DELETE FROM `', p_database_name, '`.products');
-  PREPARE statement_handle FROM @sql_text;
-  EXECUTE statement_handle;
-  DEALLOCATE PREPARE statement_handle;
-
-  SET @sql_text = CONCAT(
-    'INSERT INTO `',
-    p_database_name,
-    '`.products ',
-    '(id, name, category, price, currency, stock_label, description, version) ',
-    'VALUES ',
-    '(1, ''Architecture Practice Laptop'', ''electronics'', 6999.00, ',
-    '''CNY'', ''in_stock'', ''Product used by the application cluster lab.'', 1),',
-    '(2, ''Distributed Systems Handbook'', ''books'', 129.00, ',
-    '''CNY'', ''in_stock'', ''Product used by cache and database labs.'', 1)'
-  );
-  PREPARE statement_handle FROM @sql_text;
-  EXECUTE statement_handle;
-  DEALLOCATE PREPARE statement_handle;
-
 END$$
 
 CREATE PROCEDURE destroy_lab_database(
