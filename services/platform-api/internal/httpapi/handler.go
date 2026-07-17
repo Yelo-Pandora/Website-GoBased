@@ -156,6 +156,7 @@ type labActionRequest struct {
 	Parameters       struct {
 		PerformancePercent *int                 `json:"performancePercent,omitempty"`
 		Weights            []lab.InstanceWeight `json:"weights,omitempty"`
+		BalancingMode      *string              `json:"balancingMode,omitempty"`
 	} `json:"parameters"`
 }
 
@@ -251,6 +252,7 @@ func (h *handler) submitLabAction(ctx *gin.Context) {
 			TargetInstanceID:   request.TargetInstanceID,
 			PerformancePercent: request.Parameters.PerformancePercent,
 			Weights:            request.Parameters.Weights,
+			BalancingMode:      request.Parameters.BalancingMode,
 		},
 	)
 	if err != nil {

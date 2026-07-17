@@ -98,8 +98,9 @@ function schedulePoll() {
   if (!user.value || view.value !== 'lab' || document.hidden || !snapshot.value?.lab?.id) return;
   const status = snapshot.value.lab.status;
   const operationStatus = snapshot.value.latestOperation?.status;
+  const balancerStatus = snapshot.value.balancer?.status;
   const fast = ['Preparing', 'Expiring', 'Terminating'].includes(status) ||
-    busyOperationStatuses.has(operationStatus);
+    busyOperationStatuses.has(operationStatus) || balancerStatus === 'converging';
   pollTimer = window.setTimeout(() => loadSnapshot({silent: true}), fast ? 1000 : 5000);
 }
 

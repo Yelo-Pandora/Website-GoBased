@@ -1,16 +1,21 @@
 <script setup>
 import {Gauge, Plus, Scale, Trash2} from '@lucide/vue';
-import {reactive, watch} from 'vue';
+import {computed, reactive, watch} from 'vue';
+
+import {buildBalancerView} from '../features/lab/balancer-view.js';
 
 const props = defineProps({
   instances: {type: Array, default: () => []},
   busy: Boolean,
   enabled: Boolean,
+  mode: {type: String, default: 'fixed'},
+  balancer: {type: Object, default: null},
 });
 
 const emit = defineEmits(['action']);
 const performance = reactive({});
 const weights = reactive({});
+const balancerView = computed(() => buildBalancerView(props.instances, props.balancer));
 
 watch(() => props.instances, (instances) => {
   for (const instance of instances) {
@@ -30,6 +35,11 @@ function applyWeights() {
       weight: Number(weights[instance.instanceId]),
     })),
   });
+}
+
+function setMode(mode) {
+  if (mode === props.mode) return;
+  submit('SET_BALANCING_MODE', null, {balancingMode: mode});
 }
 </script>
 
@@ -51,7 +61,12 @@ function applyWeights() {
       <article v-for="instance in instances" :key="instance.instanceId" class="cluster-instance-row">
         <div>
           <strong>{{ instance.instanceName }}</strong>
-          <small>容量 {{ instance.effectiveCapacity }} · CPU {{ instance.cpuLimitCores }}</small>
+          <small>
+            容量 {{ instance.effectiveCapacity }} · CPU {{ instance.cpuLimitCores }}
+            <template v-if="mode === 'adaptive'">
+              · 目标权重 {{ balancerView.targetFor(instance.instanceId) }}
+            </template>
+          </small>
         </div>
         <label>
           <span>性能</span>
@@ -79,15 +94,53 @@ function applyWeights() {
       </article>
     </div>
 
-    <div class="weight-editor">
+    <div class="balancing-mode-control">
+      <span><Scale :size="17" />负载均衡模式</span>
+      <div class="mode-toggle" role="group" aria-label="负载均衡模式">
+        <button
+          type="button"
+          :class="{ 'is-active': mode === 'fixed' }"
+          :aria-pressed="mode === 'fixed'"
+          :disabled="busy || !enabled"
+          @click="setMode('fixed')"
+        >固定</button>
+        <button
+          type="button"
+          :class="{ 'is-active': mode === 'adaptive' }"
+          :aria-pressed="mode === 'adaptive'"
+          :disabled="busy || !enabled"
+          @click="setMode('adaptive')"
+        >自适应</button>
+      </div>
+    </div>
+
+    <div v-if="mode === 'fixed'" class="weight-editor">
       <span><Scale :size="17" />固定权重</span>
       <label v-for="instance in instances" :key="instance.instanceId">
         <span>{{ instance.instanceName }}</span>
-        <input v-model.number="weights[instance.instanceId]" type="number" min="1" max="100" />
+        <input
+          v-model.number="weights[instance.instanceId]"
+          type="number"
+          min="1"
+          max="100"
+          :disabled="busy || !enabled"
+        />
       </label>
       <button class="button" type="button" :disabled="busy || !enabled" @click="applyWeights">
         应用权重
       </button>
+    </div>
+
+    <div v-else class="adaptive-balancer" :data-status="balancerView.status">
+      <div>
+        <Scale :size="18" />
+        <span><strong>{{ balancerView.statusText }}</strong><small>后端每 2 秒采样一次</small></span>
+      </div>
+      <code>容量 {{ balancerView.capacityRatio }} → 权重 {{ balancerView.weightRatio }}</code>
+      <p v-if="balancerView.notice">{{ balancerView.notice }}</p>
+      <p v-if="balancerView.error" class="adaptive-balancer__error">
+        {{ balancerView.error.code }}：{{ balancerView.error.message }}
+      </p>
     </div>
   </section>
 </template>

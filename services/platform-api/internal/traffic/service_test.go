@@ -35,6 +35,16 @@ type limiterStub bool
 
 func (s limiterStub) Allow(uint64) bool { return bool(s) }
 
+type observerStub struct {
+	labID  string
+	result protocol.TrafficBatchResult
+}
+
+func (s *observerStub) Observe(labID string, result protocol.TrafficBatchResult) {
+	s.labID = labID
+	s.result = result
+}
+
 func TestServiceValidatesAndBuildsPath(t *testing.T) {
 	result := validTrafficResult()
 	service := NewService(
@@ -66,6 +76,30 @@ func TestServiceRejectsIdentityMismatch(t *testing.T) {
 	})
 	if !errors.Is(err, ErrUnavailable) {
 		t.Fatalf("Submit() error = %v; want ErrUnavailable", err)
+	}
+}
+
+func TestServiceObservesOnlyValidatedResults(t *testing.T) {
+	result := validTrafficResult()
+	observer := &observerStub{}
+	service := NewService(
+		labReaderStub{snapshot: runningSnapshot()},
+		batchClientStub{result: result},
+		limiterStub(true),
+		observer,
+	)
+	if _, err := service.Submit(
+		context.Background(),
+		7,
+		"lab-test",
+		protocol.TrafficBatchRequest{
+			BatchID: "batch-test", ProductID: 1, RequestUnits: 10,
+		},
+	); err != nil {
+		t.Fatalf("Submit() error = %v", err)
+	}
+	if observer.labID != "lab-test" || observer.result.TargetInstanceID != "app-1" {
+		t.Fatalf("observer capture = %#v", observer)
 	}
 }
 

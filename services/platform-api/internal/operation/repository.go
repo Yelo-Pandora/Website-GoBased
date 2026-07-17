@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"time"
 
+	"website-gobased/services/platform-api/internal/balancer"
 	"website-gobased/services/platform-api/internal/lab"
 )
 
@@ -407,7 +408,7 @@ func (r *Repository) CompleteTopology(
 	); err != nil {
 		return err
 	}
-	if errorCode == "" {
+	if errorCode == "" && record.Action != ActionApplyAdaptiveWeights {
 		result, err := tx.ExecContext(ctx, `
 			UPDATE lab_sessions
 			SET status = ?, last_effective_action_at = ?, updated_at = ?
@@ -507,30 +508,128 @@ func applyTopologyResult(
 		if err := requireOneRow(updated); err != nil {
 			return lab.ErrStateConflict
 		}
-	case ActionSetInstanceWeights:
+	case ActionSetInstanceWeights, ActionApplyAdaptiveWeights:
+		if record.Action == ActionApplyAdaptiveWeights && result.Skipped {
+			return nil
+		}
 		if len(result.Weights) == 0 {
 			return errors.New("weight result is incomplete")
 		}
-		for _, weight := range result.Weights {
-			updated, err := tx.ExecContext(ctx, `
-				UPDATE lab_instances SET current_weight = ?, updated_at = ?
-				WHERE lab_id = ? AND instance_name = ?`,
-				weight.Weight,
-				now,
-				record.LabID,
-				weight.InstanceID,
-			)
-			if err != nil {
-				return fmt.Errorf("persist instance weight: %w", err)
-			}
-			if err := requireOneRow(updated); err != nil {
-				return lab.ErrStateConflict
-			}
+		return persistWeights(ctx, tx, record.LabID, result.Weights, now)
+	case ActionSetBalancingMode:
+		if result.BalancingMode != "fixed" && result.BalancingMode != "adaptive" {
+			return errors.New("balancing mode result is invalid")
+		}
+		updated, err := tx.ExecContext(ctx, `
+			UPDATE lab_sessions SET balancing_mode = ?, updated_at = ?
+			WHERE id = ? AND status IN (?, ?)`,
+			result.BalancingMode,
+			now,
+			record.LabID,
+			lab.StatusRunning,
+			lab.StatusExpiring,
+		)
+		if err != nil {
+			return fmt.Errorf("persist balancing mode: %w", err)
+		}
+		if err := requireOneRow(updated); err != nil {
+			return lab.ErrStateConflict
 		}
 	default:
 		return errors.New("unsupported topology result")
 	}
 	return nil
+}
+
+func persistWeights(
+	ctx context.Context,
+	tx *sql.Tx,
+	labID string,
+	weights []lab.InstanceWeight,
+	now time.Time,
+) error {
+	for _, weight := range weights {
+		updated, err := tx.ExecContext(ctx, `
+			UPDATE lab_instances SET current_weight = ?, updated_at = ?
+			WHERE lab_id = ? AND instance_name = ?`,
+			weight.Weight,
+			now,
+			labID,
+			weight.InstanceID,
+		)
+		if err != nil {
+			return fmt.Errorf("persist instance weight: %w", err)
+		}
+		if err := requireOneRow(updated); err != nil {
+			return lab.ErrStateConflict
+		}
+	}
+	return nil
+}
+
+// ValidateAdaptive checks that an internal operation still matches persisted topology.
+func (r *Repository) ValidateAdaptive(
+	ctx context.Context,
+	record Record,
+	topologyFingerprint string,
+) (bool, error) {
+	tx, err := r.database.BeginTx(ctx, &sql.TxOptions{
+		Isolation: sql.LevelRepeatableRead,
+		ReadOnly:  true,
+	})
+	if err != nil {
+		return false, fmt.Errorf("begin adaptive validation: %w", err)
+	}
+	defer tx.Rollback()
+	var status string
+	var scenarioType string
+	var mode string
+	err = tx.QueryRowContext(ctx, `
+		SELECT status, scenario_type, balancing_mode
+		FROM lab_sessions
+		WHERE id = ?`, record.LabID).Scan(&status, &scenarioType, &mode)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("load adaptive validation lab: %w", err)
+	}
+	if record.Action != ActionApplyAdaptiveWeights || scenarioType != "application_cluster" ||
+		mode != "adaptive" || (status != string(lab.StatusRunning) &&
+		status != string(lab.StatusExpiring)) {
+		return false, nil
+	}
+	rows, err := tx.QueryContext(ctx, `
+		SELECT instance_name, status, effective_capacity, current_weight
+		FROM lab_instances
+		WHERE lab_id = ?
+		ORDER BY instance_name`, record.LabID)
+	if err != nil {
+		return false, fmt.Errorf("load adaptive validation instances: %w", err)
+	}
+	var instances []balancer.Instance
+	for rows.Next() {
+		var instance balancer.Instance
+		if err := rows.Scan(
+			&instance.ID,
+			&instance.Status,
+			&instance.EffectiveCapacity,
+			&instance.CurrentWeight,
+		); err != nil {
+			rows.Close()
+			return false, fmt.Errorf("scan adaptive validation instance: %w", err)
+		}
+		instances = append(instances, instance)
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return false, fmt.Errorf("iterate adaptive validation instances: %w", err)
+	}
+	rows.Close()
+	if err := tx.Commit(); err != nil {
+		return false, fmt.Errorf("commit adaptive validation: %w", err)
+	}
+	return balancer.TopologyFingerprint(instances) == topologyFingerprint, nil
 }
 
 func completeOperationRecord(

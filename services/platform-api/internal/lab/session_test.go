@@ -185,6 +185,32 @@ func TestServiceSnapshotDerivesLifecycleDeadlines(t *testing.T) {
 	}
 }
 
+func TestValidActionInputAcceptsOnlyKnownBalancingModes(t *testing.T) {
+	t.Parallel()
+
+	adaptive := "adaptive"
+	invalid := "automatic"
+	if !validActionInput(ActionInput{
+		ActionType:    ActionSetBalancingMode,
+		BalancingMode: &adaptive,
+	}) {
+		t.Fatal("validActionInput() rejected adaptive mode")
+	}
+	if validActionInput(ActionInput{
+		ActionType:    ActionSetBalancingMode,
+		BalancingMode: &invalid,
+	}) {
+		t.Fatal("validActionInput() accepted an unknown mode")
+	}
+	if validActionInput(ActionInput{
+		ActionType:    ActionSetBalancingMode,
+		BalancingMode: &adaptive,
+		Weights:       []InstanceWeight{{InstanceID: "app-1", Weight: 1}},
+	}) {
+		t.Fatal("validActionInput() accepted mixed mode and weight parameters")
+	}
+}
+
 func TestScenarioForCourse(t *testing.T) {
 	t.Parallel()
 

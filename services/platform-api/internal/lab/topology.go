@@ -215,6 +215,8 @@ func buildTopologyPayload(
 		}
 		payload.Servers = servers
 		return payload, nil, nil
+	case ActionSetBalancingMode:
+		return payload, nil, nil
 	default:
 		return payload, nil, ErrActionNotAllowed
 	}

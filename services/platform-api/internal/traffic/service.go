@@ -40,16 +40,30 @@ type userLimiter interface {
 	Allow(userID uint64) bool
 }
 
+type resultObserver interface {
+	Observe(labID string, result protocol.TrafficBatchResult)
+}
+
 // Service enforces platform ownership and validates an instance result.
 type Service struct {
-	labs    labReader
-	client  batchClient
-	limiter userLimiter
+	labs     labReader
+	client   batchClient
+	limiter  userLimiter
+	observer resultObserver
 }
 
 // NewService returns a synchronous traffic service.
-func NewService(labs labReader, client batchClient, limiter userLimiter) *Service {
-	return &Service{labs: labs, client: client, limiter: limiter}
+func NewService(
+	labs labReader,
+	client batchClient,
+	limiter userLimiter,
+	observers ...resultObserver,
+) *Service {
+	service := &Service{labs: labs, client: client, limiter: limiter}
+	if len(observers) > 0 {
+		service.observer = observers[0]
+	}
+	return service
 }
 
 // Submit validates and proxies one traffic batch without updating lab activity.
@@ -81,6 +95,9 @@ func (s *Service) Submit(
 	}
 	if !validResult(snapshot, request, result) {
 		return protocol.TrafficBatchResult{}, ErrUnavailable
+	}
+	if s.observer != nil {
+		s.observer.Observe(labID, result)
 	}
 	result.Path = []string{"user-pool", "lab-gateway", result.TargetInstanceID}
 	return result, nil

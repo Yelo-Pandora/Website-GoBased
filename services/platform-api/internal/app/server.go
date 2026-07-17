@@ -12,6 +12,7 @@ import (
 	_ "github.com/go-sql-driver/mysql"
 
 	platformauth "website-gobased/services/platform-api/internal/auth"
+	"website-gobased/services/platform-api/internal/balancer"
 	"website-gobased/services/platform-api/internal/course"
 	"website-gobased/services/platform-api/internal/httpapi"
 	"website-gobased/services/platform-api/internal/lab"
@@ -92,6 +93,16 @@ func Run(ctx context.Context, cfg Config, logger *slog.Logger) error {
 		IdleTimeout: cfg.LabIdleTimeout,
 		MaxDuration: cfg.LabMaxDuration,
 	})
+	adaptiveController, err := balancer.NewController(
+		logger,
+		balancer.NewRepository(database),
+		balancer.DefaultConfig(),
+	)
+	if err != nil {
+		return fmt.Errorf("configure adaptive balancer: %w", err)
+	}
+	labs.SetSnapshotDecorator(adaptiveController)
+	go adaptiveController.Run(ctx)
 	trafficClient, err := traffic.NewClient(cfg.LabGatewayAddr, cfg.TrafficRequestTimeout)
 	if err != nil {
 		return fmt.Errorf("configure traffic client: %w", err)
@@ -105,6 +116,7 @@ func Run(ctx context.Context, cfg Config, logger *slog.Logger) error {
 			cfg.TrafficBurst,
 			cfg.TrafficLimiterEntries,
 		),
+		adaptiveController,
 	)
 
 	server := &http.Server{

@@ -18,6 +18,7 @@ type queueStub struct {
 	completedCode   string
 	completedResult any
 	completedAction string
+	adaptiveValid   bool
 }
 
 func (s *queueStub) Claim(
@@ -98,6 +99,14 @@ func (s *queueStub) CompleteTopology(
 	s.completedResult = resultValue
 	s.completedAction = record.Action
 	return nil
+}
+
+func (s *queueStub) ValidateAdaptive(
+	_ context.Context,
+	_ Record,
+	_ string,
+) (bool, error) {
+	return s.adaptiveValid, nil
 }
 
 func (s *queueStub) CompleteFailure(
@@ -249,6 +258,124 @@ func TestWorkerAddsInstanceAndAppliesUpstream(t *testing.T) {
 	result, ok := queue.completedResult.(TopologyResult)
 	if !ok || result.Instance == nil || result.Instance.InstanceName != "app-2" {
 		t.Fatalf("completed result = %#v", queue.completedResult)
+	}
+}
+
+func TestWorkerPersistsBalancingModeWithoutOrchestratorCommand(t *testing.T) {
+	queue := &queueStub{record: Record{
+		ID: 5, OperationID: "operation-mode", LabID: "lab-test", RequestedBy: 7,
+		Action: ActionSetBalancingMode,
+		Payload: json.RawMessage(`{
+			"request":{"balancingMode":"adaptive"}
+		}`),
+	}}
+	executor := &executorStub{}
+	worker, err := newWorker(
+		slog.New(slog.NewTextHandler(io.Discard, nil)),
+		queue,
+		executor,
+		WorkerConfig{
+			Owner: "worker-1", PollInterval: time.Second,
+			LeaseDuration: time.Minute, CommandTimeout: 10 * time.Second,
+		},
+	)
+	if err != nil {
+		t.Fatalf("newWorker() error = %v", err)
+	}
+	processed, err := worker.processOne(context.Background())
+	if err != nil || !processed {
+		t.Fatalf("processOne() = %t, %v", processed, err)
+	}
+	result, ok := queue.completedResult.(TopologyResult)
+	if !ok || result.BalancingMode != "adaptive" {
+		t.Fatalf("completed result = %#v", queue.completedResult)
+	}
+	if executor.command.CommandType != "" {
+		t.Fatalf("unexpected orchestrator command = %#v", executor.command)
+	}
+}
+
+func TestWorkerAppliesValidatedAdaptiveWeights(t *testing.T) {
+	queue := &queueStub{
+		adaptiveValid: true,
+		record: Record{
+			ID: 6, OperationID: "balancer-test", LabID: "lab-test", RequestedBy: 7,
+			Action: ActionApplyAdaptiveWeights,
+			Payload: json.RawMessage(`{
+				"expectedMode":"adaptive",
+				"topologyFingerprint":"fingerprint-test",
+				"servers":[
+					{"instanceName":"app-1","weight":10},
+					{"instanceName":"app-2","weight":3}
+				],
+				"request":{"weights":[
+					{"instanceId":"app-1","weight":10},
+					{"instanceId":"app-2","weight":3}
+				]}
+			}`),
+		},
+	}
+	executor := &executorStub{response: protocol.CommandResponse{
+		Status: "succeeded", Result: map[string]any{"applied": true},
+	}}
+	worker, err := newWorker(
+		slog.New(slog.NewTextHandler(io.Discard, nil)),
+		queue,
+		executor,
+		WorkerConfig{
+			Owner: "worker-1", PollInterval: time.Second,
+			LeaseDuration: time.Minute, CommandTimeout: 10 * time.Second,
+		},
+	)
+	if err != nil {
+		t.Fatalf("newWorker() error = %v", err)
+	}
+	worker.newCommandID = func() (string, error) { return "command-adaptive", nil }
+	if _, err := worker.processOne(context.Background()); err != nil {
+		t.Fatalf("processOne() error = %v", err)
+	}
+	if executor.command.CommandType != "APPLY_LAB_UPSTREAM" {
+		t.Fatalf("command = %#v", executor.command)
+	}
+	result, ok := queue.completedResult.(TopologyResult)
+	if !ok || len(result.Weights) != 2 || result.Weights[1].Weight != 3 {
+		t.Fatalf("completed result = %#v", queue.completedResult)
+	}
+}
+
+func TestWorkerSkipsStaleAdaptiveWeights(t *testing.T) {
+	queue := &queueStub{record: Record{
+		ID: 7, OperationID: "balancer-stale", LabID: "lab-test", RequestedBy: 7,
+		Action: ActionApplyAdaptiveWeights,
+		Payload: json.RawMessage(`{
+			"expectedMode":"adaptive",
+			"topologyFingerprint":"fingerprint-stale",
+			"servers":[{"instanceName":"app-1","weight":1}],
+			"request":{"weights":[{"instanceId":"app-1","weight":1}]}
+		}`),
+	}}
+	executor := &executorStub{}
+	worker, err := newWorker(
+		slog.New(slog.NewTextHandler(io.Discard, nil)),
+		queue,
+		executor,
+		WorkerConfig{
+			Owner: "worker-1", PollInterval: time.Second,
+			LeaseDuration: time.Minute, CommandTimeout: 10 * time.Second,
+		},
+	)
+	if err != nil {
+		t.Fatalf("newWorker() error = %v", err)
+	}
+	if _, err := worker.processOne(context.Background()); err != nil {
+		t.Fatalf("processOne() error = %v", err)
+	}
+	result, ok := queue.completedResult.(TopologyResult)
+	if !ok || !result.Skipped {
+		t.Fatalf("completed result = %#v", queue.completedResult)
+	}
+	if executor.command.CommandType != "" {
+		t.Fatalf("unexpected orchestrator command = %#v", executor.command)
 	}
 }
 

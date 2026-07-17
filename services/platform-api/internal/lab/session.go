@@ -44,6 +44,7 @@ const (
 	ActionRemoveInstance         = "REMOVE_INSTANCE"
 	ActionSetInstancePerformance = "SET_INSTANCE_PERFORMANCE"
 	ActionSetInstanceWeights     = "SET_INSTANCE_WEIGHTS"
+	ActionSetBalancingMode       = "SET_BALANCING_MODE"
 )
 
 // InstanceWeight is one fixed Nginx weight selected by the learner.
@@ -59,6 +60,7 @@ type ActionInput struct {
 	TargetInstanceID   *string          `json:"targetInstanceId,omitempty"`
 	PerformancePercent *int             `json:"performancePercent,omitempty"`
 	Weights            []InstanceWeight `json:"weights,omitempty"`
+	BalancingMode      *string          `json:"balancingMode,omitempty"`
 }
 
 // Session is the persistent control-plane view of one lab.
@@ -117,6 +119,21 @@ type OperationError struct {
 	Message string `json:"message"`
 }
 
+// InstanceLoad is one smoothed load value exposed by the adaptive controller.
+type InstanceLoad struct {
+	InstanceID string  `json:"instanceId"`
+	LoadRatio  float64 `json:"loadRatio"`
+}
+
+// BalancerSnapshot is the simplified public adaptive controller state.
+type BalancerSnapshot struct {
+	Status         string           `json:"status"`
+	TargetWeights  []InstanceWeight `json:"targetWeights"`
+	SmoothedLoads  []InstanceLoad   `json:"smoothedLoads"`
+	CapacityNotice string           `json:"capacityNotice,omitempty"`
+	LastError      *OperationError  `json:"lastError,omitempty"`
+}
+
 // OperationSnapshot is the latest asynchronous operation for a lab.
 type OperationSnapshot struct {
 	OperationID      string          `json:"operationId"`
@@ -172,6 +189,7 @@ type Snapshot struct {
 	Resources       []Resource         `json:"-"`
 	LatestOperation *OperationSnapshot `json:"latestOperation"`
 	TrafficPolicy   TrafficPolicy      `json:"trafficPolicy"`
+	Balancer        *BalancerSnapshot  `json:"balancer"`
 }
 
 // CreatedOperation is the operation created atomically with a lab session.
@@ -237,6 +255,10 @@ type topologyActionRepository interface {
 	) (ActionResult, error)
 }
 
+type snapshotDecorator interface {
+	DecorateSnapshot(*Snapshot)
+}
+
 // Action enqueues one idempotent stage-seven topology action.
 func (s *Service) Action(
 	ctx context.Context,
@@ -265,16 +287,24 @@ func (s *Service) Action(
 func validActionInput(input ActionInput) bool {
 	switch input.ActionType {
 	case ActionAddInstance:
-		return input.TargetInstanceID == nil && input.PerformancePercent == nil && len(input.Weights) == 0
+		return input.TargetInstanceID == nil && input.PerformancePercent == nil &&
+			len(input.Weights) == 0 && input.BalancingMode == nil
 	case ActionRemoveInstance:
 		return input.TargetInstanceID != nil && *input.TargetInstanceID != "" &&
-			input.PerformancePercent == nil && len(input.Weights) == 0
+			input.PerformancePercent == nil && len(input.Weights) == 0 &&
+			input.BalancingMode == nil
 	case ActionSetInstancePerformance:
 		return input.TargetInstanceID != nil && *input.TargetInstanceID != "" &&
 			input.PerformancePercent != nil && *input.PerformancePercent >= 20 &&
-			*input.PerformancePercent <= 100 && len(input.Weights) == 0
+			*input.PerformancePercent <= 100 && len(input.Weights) == 0 &&
+			input.BalancingMode == nil
 	case ActionSetInstanceWeights:
-		return input.TargetInstanceID == nil && input.PerformancePercent == nil && len(input.Weights) > 0
+		return input.TargetInstanceID == nil && input.PerformancePercent == nil &&
+			len(input.Weights) > 0 && input.BalancingMode == nil
+	case ActionSetBalancingMode:
+		return input.TargetInstanceID == nil && input.PerformancePercent == nil &&
+			len(input.Weights) == 0 && input.BalancingMode != nil &&
+			(*input.BalancingMode == "fixed" || *input.BalancingMode == "adaptive")
 	default:
 		return false
 	}
@@ -287,6 +317,7 @@ type Service struct {
 	lifetime   LifetimeConfig
 	now        func() time.Time
 	newID      func() (string, error)
+	decorator  snapshotDecorator
 }
 
 // LifetimeConfig controls derived lab deadlines exposed in snapshots.
@@ -317,6 +348,11 @@ func newService(repository createRepository, quota Quota, lifetime ...LifetimeCo
 		now:        time.Now,
 		newID:      newLabID,
 	}
+}
+
+// SetSnapshotDecorator attaches optional runtime state to persisted snapshots.
+func (s *Service) SetSnapshotDecorator(decorator snapshotDecorator) {
+	s.decorator = decorator
 }
 
 // Create creates a Preparing session and its CREATE_LAB operation atomically.
@@ -425,6 +461,9 @@ func (s *Service) Snapshot(
 	}
 	s.decorateDeadlines(&snapshot.Lab)
 	s.decorateTrafficSnapshot(&snapshot)
+	if s.decorator != nil {
+		s.decorator.DecorateSnapshot(&snapshot)
+	}
 	return snapshot, nil
 }
 

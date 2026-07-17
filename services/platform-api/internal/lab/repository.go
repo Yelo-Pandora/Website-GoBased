@@ -543,7 +543,7 @@ func (r *Repository) FindSnapshot(
 		SELECT operation_id, action, target_instance_id, status, created_at,
 			completed_at, error_code, error_message
 		FROM lab_operations
-		WHERE lab_id = ?
+		WHERE lab_id = ? AND action <> 'APPLY_ADAPTIVE_WEIGHTS'
 		ORDER BY created_at DESC, id DESC
 		LIMIT 1`, labID).Scan(
 		&operation.OperationID,

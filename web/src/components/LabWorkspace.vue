@@ -124,6 +124,8 @@ const reasonNames = {
         :instances="snapshot.topology.instances"
         :busy="busy"
         :enabled="snapshot.lab.status === 'Running'"
+        :mode="snapshot.lab.balancingMode"
+        :balancer="snapshot.balancer"
         @action="$emit('action', $event)"
       />
       <LifecyclePanel

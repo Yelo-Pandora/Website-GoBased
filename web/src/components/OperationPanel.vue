@@ -11,6 +11,7 @@ const actionNames = {
   REMOVE_INSTANCE: '删除实例',
   SET_INSTANCE_PERFORMANCE: '调整实例性能',
   SET_INSTANCE_WEIGHTS: '调整固定权重',
+  SET_BALANCING_MODE: '切换负载均衡模式',
 };
 
 function isBusy(status) {

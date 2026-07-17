@@ -1,4 +1,10 @@
 import {expect, test} from '@playwright/test';
+import {execFile} from 'node:child_process';
+import path from 'node:path';
+import {promisify} from 'node:util';
+
+const execFileAsync = promisify(execFile);
+const workspaceRoot = path.resolve(import.meta.dirname, '..', '..');
 
 async function login(page) {
   await page.goto('/');
@@ -100,6 +106,91 @@ test('learner drives real traffic and fixed cluster controls', async ({page}) =>
   await appTwo.getByRole('button', {name: '应用'}).click();
   await expect(page.getByText('调整实例性能', {exact: true})).toBeVisible();
   await expect(appTwo.getByText(/容量 30/)).toBeVisible();
+
+  page.once('dialog', (dialog) => dialog.accept());
+  await page.getByRole('button', {name: '结束', exact: true}).click();
+  await expect(page.getByText('已结束', {exact: true})).toBeVisible();
+});
+
+test('adaptive weights converge without generated traffic', async ({page}) => {
+  await login(page);
+  await terminateActiveLab(page);
+  await page.getByRole('button', {name: /应用集群与负载均衡/}).click();
+  await page.getByRole('button', {name: /创建实验|新建实验/}).click();
+  await expect(page.getByText('运行中', {exact: true})).toBeVisible();
+
+  const controls = page.locator('.cluster-controls');
+  await controls.getByRole('button', {name: '增加实例'}).click();
+  await expect(page.locator('.operation-row .status-badge')).toHaveText('succeeded');
+  await controls.getByRole('button', {name: '增加实例'}).click();
+  await expect(page.getByText('app-3', {exact: true}).first()).toBeVisible();
+  await expect(page.locator('.operation-row .status-badge')).toHaveText('succeeded');
+
+  const appThree = controls.locator('.cluster-instance-row').filter({hasText: 'app-3'});
+  await appThree.getByRole('combobox').selectOption('30');
+  await appThree.getByRole('button', {name: '应用'}).click();
+  await expect(appThree.getByText(/容量 30/)).toBeVisible();
+  await expect(page.locator('.operation-row .status-badge')).toHaveText('succeeded');
+
+  await controls.getByRole('button', {name: '自适应', exact: true}).click();
+  await expect(page.getByText('切换负载均衡模式', {exact: true})).toBeVisible();
+  await expect(page.locator('.operation-row .status-badge')).toHaveText('succeeded');
+  await expect(controls.getByText('自适应权重已稳定', {exact: true})).toBeVisible({
+    timeout: 10_000,
+  });
+  await expect(controls.getByText('容量 100:100:30 → 权重 10:10:3', {exact: true})).toBeVisible();
+
+  const topologyAppThree = page.locator('.topology-panel .resource-node').filter({hasText: 'app-3'});
+  await expect(topologyAppThree.locator('dd').last()).toHaveText('3');
+
+  await controls.getByRole('button', {name: '固定', exact: true}).click();
+  await expect(page.locator('.operation-row .status-badge')).toHaveText('succeeded');
+  await appThree.getByRole('combobox').selectOption('40');
+  await appThree.getByRole('button', {name: '应用'}).click();
+  await expect(appThree.getByText(/容量 40/)).toBeVisible();
+  await expect(topologyAppThree.locator('dd').last()).toHaveText('3');
+
+  page.once('dialog', (dialog) => dialog.accept());
+  await page.getByRole('button', {name: '结束', exact: true}).click();
+  await expect(page.getByText('已结束', {exact: true})).toBeVisible();
+});
+
+test('adaptive mode recovers after a platform API restart', async ({page}) => {
+  test.skip(!process.env.RUN_PLATFORM_RESTART, 'restarts the platform API container');
+  test.setTimeout(90_000);
+  await login(page);
+  await terminateActiveLab(page);
+  await page.getByRole('button', {name: /应用集群与负载均衡/}).click();
+  await page.getByRole('button', {name: /创建实验|新建实验/}).click();
+  await expect(page.getByText('运行中', {exact: true})).toBeVisible();
+
+  const controls = page.locator('.cluster-controls');
+  await controls.getByRole('button', {name: '增加实例'}).click();
+  await expect(page.locator('.operation-row .status-badge')).toHaveText('succeeded');
+  const appTwo = controls.locator('.cluster-instance-row').filter({hasText: 'app-2'});
+  await appTwo.getByRole('combobox').selectOption('30');
+  await appTwo.getByRole('button', {name: '应用'}).click();
+  await expect(appTwo.getByText(/容量 30/)).toBeVisible();
+  await controls.getByRole('button', {name: '自适应', exact: true}).click();
+  await expect(controls.getByText('自适应权重已稳定', {exact: true})).toBeVisible({
+    timeout: 10_000,
+  });
+
+  await execFileAsync('docker', ['compose', 'restart', 'platform-api'], {cwd: workspaceRoot});
+  await execFileAsync(
+    'docker',
+    ['compose', 'up', '-d', '--wait', 'platform-api'],
+    {cwd: workspaceRoot},
+  );
+  await page.reload();
+  await expect(page.getByRole('button', {name: '自适应', exact: true})).toHaveAttribute(
+    'aria-pressed',
+    'true',
+  );
+  await expect(controls.getByText('自适应权重已稳定', {exact: true})).toBeVisible({
+    timeout: 10_000,
+  });
+  await expect(controls.getByText('容量 100:30 → 权重 10:3', {exact: true})).toBeVisible();
 
   page.once('dialog', (dialog) => dialog.accept());
   await page.getByRole('button', {name: '结束', exact: true}).click();

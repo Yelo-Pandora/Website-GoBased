@@ -2,7 +2,7 @@
 
 本仓库是互联网后端架构学习平台 MVP 工程。
 当前已经实现课程、认证、学习进度、实验生命周期、安全资源编排、
-应用集群、固定权重和浏览器生成的真实请求批次动画。
+应用集群、固定与自适应权重，以及浏览器生成的真实请求批次动画。
 
 ## 基础组件
 
@@ -54,3 +54,6 @@ curl --fail http://127.0.0.1:8080/readyz
 
 阶段七真实流量、扩缩容、性能和固定权重验收见
 [`docs/stage-7-user-acceptance-guide.md`](docs/stage-7-user-acceptance-guide.md)。
+
+阶段八自适应权重收敛、模式切换和失败保护验收见
+[`docs/stage-8-user-acceptance-guide.md`](docs/stage-8-user-acceptance-guide.md)。

@@ -60,6 +60,11 @@ type queue interface {
 		errorMessage string,
 		now time.Time,
 	) error
+	ValidateAdaptive(
+		ctx context.Context,
+		record Record,
+		topologyFingerprint string,
+	) (bool, error)
 	CompleteFailure(
 		ctx context.Context,
 		record Record,
@@ -239,14 +244,18 @@ type topologyPayload struct {
 	PreviousPerformancePercent int              `json:"previousPerformancePercent"`
 	Servers                    []topologyServer `json:"servers"`
 	PreviousServers            []topologyServer `json:"previousServers"`
+	ExpectedMode               string           `json:"expectedMode"`
+	TopologyFingerprint        string           `json:"topologyFingerprint"`
 	Request                    struct {
-		Weights []lab.InstanceWeight `json:"weights"`
+		Weights       []lab.InstanceWeight `json:"weights"`
+		BalancingMode *string              `json:"balancingMode"`
 	} `json:"request"`
 }
 
 func isTopologyAction(action string) bool {
 	return action == ActionAddInstance || action == ActionRemoveInstance ||
-		action == ActionSetInstancePerformance || action == ActionSetInstanceWeights
+		action == ActionSetInstancePerformance || action == ActionSetInstanceWeights ||
+		action == ActionSetBalancingMode || action == ActionApplyAdaptiveWeights
 }
 
 func (w *Worker) processTopology(ctx context.Context, record Record) error {
@@ -263,6 +272,10 @@ func (w *Worker) processTopology(ctx context.Context, record Record) error {
 		return w.setInstancePerformance(ctx, record, payload)
 	case ActionSetInstanceWeights:
 		return w.setInstanceWeights(ctx, record, payload)
+	case ActionSetBalancingMode:
+		return w.setBalancingMode(ctx, record, payload)
+	case ActionApplyAdaptiveWeights:
+		return w.applyAdaptiveWeights(ctx, record, payload)
 	default:
 		return w.completeTopologyFailure(ctx, record, "ACTION_NOT_SUPPORTED", "topology action is not supported")
 	}
@@ -366,6 +379,76 @@ func (w *Worker) setInstanceWeights(ctx context.Context, record Record, payload 
 	}
 	return w.queue.CompleteTopology(
 		ctx, record, TopologyResult{Weights: payload.Request.Weights}, "", "",
+		w.now().UTC().Truncate(time.Microsecond),
+	)
+}
+
+func (w *Worker) setBalancingMode(ctx context.Context, record Record, payload topologyPayload) error {
+	if payload.Request.BalancingMode == nil {
+		return w.completeTopologyFailure(
+			ctx,
+			record,
+			"INVALID_OPERATION",
+			"balancing mode operation payload is invalid",
+		)
+	}
+	return w.queue.CompleteTopology(
+		ctx,
+		record,
+		TopologyResult{BalancingMode: *payload.Request.BalancingMode},
+		"",
+		"",
+		w.now().UTC().Truncate(time.Microsecond),
+	)
+}
+
+func (w *Worker) applyAdaptiveWeights(
+	ctx context.Context,
+	record Record,
+	payload topologyPayload,
+) error {
+	if payload.ExpectedMode != "adaptive" || payload.TopologyFingerprint == "" ||
+		len(payload.Servers) == 0 || len(payload.Request.Weights) != len(payload.Servers) {
+		return w.completeTopologyFailure(
+			ctx,
+			record,
+			"INVALID_OPERATION",
+			"adaptive weight operation payload is invalid",
+		)
+	}
+	valid, err := w.queue.ValidateAdaptive(ctx, record, payload.TopologyFingerprint)
+	if err != nil {
+		return w.completeTopologyFailure(
+			ctx,
+			record,
+			"INTERNAL_ERROR",
+			"adaptive topology could not be validated",
+		)
+	}
+	if !valid {
+		return w.queue.CompleteTopology(
+			ctx,
+			record,
+			TopologyResult{Skipped: true},
+			"",
+			"",
+			w.now().UTC().Truncate(time.Microsecond),
+		)
+	}
+	if err := w.applyTopologyServers(ctx, record, payload.Servers); err != nil {
+		return w.completeTopologyFailure(
+			ctx,
+			record,
+			"NGINX_CONFIG_INVALID",
+			"adaptive application weights could not be applied",
+		)
+	}
+	return w.queue.CompleteTopology(
+		ctx,
+		record,
+		TopologyResult{Weights: payload.Request.Weights},
+		"",
+		"",
 		w.now().UTC().Truncate(time.Microsecond),
 	)
 }

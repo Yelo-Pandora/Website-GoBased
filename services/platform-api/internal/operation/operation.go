@@ -6,6 +6,7 @@ import (
 	"errors"
 	"time"
 
+	"website-gobased/services/platform-api/internal/balancer"
 	"website-gobased/services/platform-api/internal/lab"
 )
 
@@ -31,6 +32,8 @@ const (
 	ActionRemoveInstance         = "REMOVE_INSTANCE"
 	ActionSetInstancePerformance = "SET_INSTANCE_PERFORMANCE"
 	ActionSetInstanceWeights     = "SET_INSTANCE_WEIGHTS"
+	ActionSetBalancingMode       = "SET_BALANCING_MODE"
+	ActionApplyAdaptiveWeights   = balancer.ActionApplyWeights
 )
 
 // TopologyResult is the normalized result of one stage-seven topology action.
@@ -38,6 +41,8 @@ type TopologyResult struct {
 	Instance          *ProvisionInstance   `json:"instance,omitempty"`
 	RemovedInstanceID string               `json:"removedInstanceId,omitempty"`
 	Weights           []lab.InstanceWeight `json:"weights,omitempty"`
+	BalancingMode     string               `json:"balancingMode,omitempty"`
+	Skipped           bool                 `json:"skipped,omitempty"`
 }
 
 // ProvisionResult is the validated resource result returned by the orchestrator.

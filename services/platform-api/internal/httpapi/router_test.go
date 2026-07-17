@@ -469,6 +469,50 @@ func TestLabLifecycleRoutes(t *testing.T) {
 	}
 }
 
+func TestLabActionAcceptsBalancingMode(t *testing.T) {
+	mode := "adaptive"
+	labs := &labServiceStub{actionResult: lab.ActionResult{Operation: lab.CreatedOperation{
+		OperationID: "operation-mode", LabID: "lab-test1234",
+		Action: lab.ActionSetBalancingMode, Status: "pending",
+	}}}
+	router := NewRouter(
+		slog.New(slog.NewTextHandler(io.Discard, nil)),
+		pingerStub{},
+		"http://lab-gateway:8080",
+		courseServiceStub{},
+		labs,
+		authenticationServiceStub{
+			session: platformauth.Session{
+				ID:   1,
+				User: platformauth.User{ID: 7, Username: "learner", Status: "active"},
+			},
+			csrfValid: true,
+		},
+		AuthConfig{CookieName: "session"},
+	)
+	request := httptest.NewRequest(
+		http.MethodPost,
+		"/api/v1/labs/lab-test1234/actions",
+		strings.NewReader(`{
+			"operationId":"operation-mode",
+			"actionType":"SET_BALANCING_MODE",
+			"targetInstanceId":null,
+			"parameters":{"balancingMode":"adaptive"}
+		}`),
+	)
+	request.AddCookie(&http.Cookie{Name: "session", Value: "test-token"})
+	request.Header.Set(csrfHeaderName, "test-csrf")
+	request.Header.Set("Content-Type", "application/json")
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, request)
+	if response.Code != http.StatusAccepted {
+		t.Fatalf("status = %d; want %d: %s", response.Code, http.StatusAccepted, response.Body.String())
+	}
+	if labs.actionInput.BalancingMode == nil || *labs.actionInput.BalancingMode != mode {
+		t.Fatalf("balancing mode input = %#v", labs.actionInput)
+	}
+}
+
 func TestAuthenticationRoutes(t *testing.T) {
 	expiresAt := time.Date(2026, time.July, 15, 12, 0, 0, 0, time.UTC)
 	session := platformauth.Session{

@@ -994,6 +994,55 @@ code {
 .cluster-instance-row > div strong { font-size: 13px; }
 .cluster-instance-row > div small { color: var(--ink-muted); font-size: 10px; margin-top: 4px; }
 
+.balancing-mode-control {
+  align-items: center;
+  border-top: 1px solid var(--border);
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-top: 16px;
+  padding-top: 16px;
+}
+
+.balancing-mode-control > span {
+  align-items: center;
+  display: inline-flex;
+  font-size: 12px;
+  font-weight: 700;
+  gap: 6px;
+}
+
+.mode-toggle {
+  background: #eef2f0;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  display: inline-flex;
+  padding: 3px;
+}
+
+.mode-toggle button {
+  background: transparent;
+  border: 0;
+  border-radius: 3px;
+  color: var(--ink-muted);
+  cursor: pointer;
+  font: inherit;
+  font-size: 12px;
+  padding: 7px 12px;
+}
+
+.mode-toggle button.is-active {
+  background: #fff;
+  box-shadow: 0 1px 3px rgba(30, 48, 45, 0.12);
+  color: var(--green);
+  font-weight: 700;
+}
+
+.mode-toggle button:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
 .weight-editor {
   align-items: end;
   border-top: 1px solid var(--border);
@@ -1015,6 +1064,44 @@ code {
 }
 
 .weight-editor input { width: 82px; }
+
+.adaptive-balancer {
+  background: #f3f8f6;
+  border: 1px solid #c9ddd5;
+  border-radius: 6px;
+  display: grid;
+  gap: 10px;
+  margin-top: 14px;
+  padding: 14px;
+}
+
+.adaptive-balancer > div {
+  align-items: center;
+  display: flex;
+  gap: 9px;
+}
+
+.adaptive-balancer span strong,
+.adaptive-balancer span small {
+  display: block;
+}
+
+.adaptive-balancer span strong { font-size: 13px; }
+.adaptive-balancer span small { color: var(--ink-muted); font-size: 10px; margin-top: 3px; }
+.adaptive-balancer code { color: #28453f; font-size: 12px; overflow-wrap: anywhere; }
+.adaptive-balancer p { color: var(--ink-muted); font-size: 12px; margin: 0; }
+
+.adaptive-balancer[data-status="stable"] {
+  background: #eaf5ef;
+  border-color: #b9d8c7;
+}
+
+.adaptive-balancer[data-status="degraded"] {
+  background: #fff5f2;
+  border-color: #efc8be;
+}
+
+.adaptive-balancer .adaptive-balancer__error { color: var(--red); }
 
 .api-view {
   min-height: calc(100vh - 66px);

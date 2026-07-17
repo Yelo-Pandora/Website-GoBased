@@ -694,7 +694,12 @@ components:
           maxLength: 64
         actionType:
           type: string
-          enum: [ADD_INSTANCE, REMOVE_INSTANCE, SET_INSTANCE_PERFORMANCE, SET_INSTANCE_WEIGHTS]
+          enum:
+            - ADD_INSTANCE
+            - REMOVE_INSTANCE
+            - SET_INSTANCE_PERFORMANCE
+            - SET_INSTANCE_WEIGHTS
+            - SET_BALANCING_MODE
         targetInstanceId:
           oneOf:
             - type: string
@@ -720,6 +725,9 @@ components:
                     type: integer
                     minimum: 1
                     maximum: 100
+            balancingMode:
+              type: string
+              enum: [fixed, adaptive]
     LabSession:
       type: object
       required:
@@ -801,7 +809,15 @@ components:
           type: string
         action:
           type: string
-          enum: [CREATE_LAB, RESET_LAB, DESTROY_LAB]
+          enum:
+            - CREATE_LAB
+            - RESET_LAB
+            - DESTROY_LAB
+            - ADD_INSTANCE
+            - REMOVE_INSTANCE
+            - SET_INSTANCE_PERFORMANCE
+            - SET_INSTANCE_WEIGHTS
+            - SET_BALANCING_MODE
         status:
           type: string
           enum: [pending, claimed, running, succeeded, failed, compensating]
@@ -853,13 +869,57 @@ components:
         loadState:
           type: string
           enum: [idle, normal, high, overloaded, unavailable]
+    BalancerSnapshot:
+      type: object
+      required: [status, targetWeights, smoothedLoads]
+      properties:
+        status:
+          type: string
+          enum: [converging, stable, degraded]
+        targetWeights:
+          type: array
+          items:
+            type: object
+            additionalProperties: false
+            required: [instanceId, weight]
+            properties:
+              instanceId:
+                type: string
+              weight:
+                type: integer
+                minimum: 1
+                maximum: 100
+        smoothedLoads:
+          type: array
+          items:
+            type: object
+            additionalProperties: false
+            required: [instanceId, loadRatio]
+            properties:
+              instanceId:
+                type: string
+              loadRatio:
+                type: number
+                minimum: 0
+        capacityNotice:
+          type: string
+          enum: [cluster_overloaded, cluster_underused]
+        lastError:
+          type: object
+          additionalProperties: false
+          required: [code, message]
+          properties:
+            code:
+              type: string
+            message:
+              type: string
     LabSnapshotResponse:
       type: object
       required: [data]
       properties:
         data:
           type: object
-          required: [lab, topology, latestOperation, trafficPolicy]
+          required: [lab, topology, latestOperation, trafficPolicy, balancer]
           properties:
             lab:
               $ref: "#/components/schemas/LabSession"
@@ -918,6 +978,10 @@ components:
                   $ref: "#/components/schemas/IntegerPolicy"
                 generationIntervalMs:
                   $ref: "#/components/schemas/IntegerPolicy"
+            balancer:
+              oneOf:
+                - $ref: "#/components/schemas/BalancerSnapshot"
+                - type: "null"
     IntegerPolicy:
       type: object
       required: [minimum, maximum, step, default]
