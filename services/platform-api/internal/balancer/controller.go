@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"math"
 	"sync"
 	"time"
 )
@@ -18,20 +19,26 @@ type store interface {
 }
 
 type controlState struct {
-	capacityFingerprint string
-	stableSamples       int
-	status              string
-	targetWeights       []Weight
-	operationID         string
-	failureCount        int
-	nextRetry           time.Time
-	lastError           *ViewError
+	configurationFingerprint string
+	configurationSamples     int
+	stableSamples            int
+	status                   string
+	targetWeights            []Weight
+	operationID              string
+	failureCount             int
+	nextRetry                time.Time
+	lastError                *ViewError
 }
 
 type metricState struct {
-	smoothed    float64
-	updatedAt   time.Time
-	lastDropped time.Time
+	currentLoad     float64
+	containerID     string
+	processingSpeed int
+	maxLoad         int
+	observedAt      time.Time
+	smoothed        float64
+	smoothedAt      time.Time
+	lastDropped     time.Time
 }
 
 // Controller samples adaptive labs and creates serialized weight operations.
@@ -101,8 +108,19 @@ func (c *Controller) sample(ctx context.Context) {
 			delete(c.states, labID)
 		}
 	}
-	for labID := range c.metrics {
-		if !seen[labID] {
+	now := c.now().UTC()
+	for labID, instances := range c.metrics {
+		for instanceID, metric := range instances {
+			load, _ := estimateMetric(metric, now)
+			drainTime := time.Duration(math.Ceil(
+				float64(metric.maxLoad)/float64(metric.processingSpeed),
+			) * float64(time.Second))
+			if load == 0 && !metric.observedAt.IsZero() && !metric.observedAt.After(now) &&
+				now.Sub(metric.observedAt) > drainTime+c.config.MetricFreshness {
+				delete(instances, instanceID)
+			}
+		}
+		if len(instances) == 0 {
 			delete(c.metrics, labID)
 		}
 	}
@@ -129,11 +147,16 @@ func (c *Controller) sampleLab(ctx context.Context, lab Lab, now time.Time) erro
 			state.nextRetry = time.Time{}
 			state.lastError = nil
 			if operation.Skipped {
+				state.configurationSamples = 0
 				state.stableSamples = 0
 				state.status = StatusConverging
 				c.saveState(lab.ID, state)
 				return nil
 			}
+			state.stableSamples = c.config.StableSamples
+			state.status = StatusStable
+			c.saveState(lab.ID, state)
+			return nil
 		case "failed":
 			state.operationID = ""
 			state.failureCount++
@@ -147,39 +170,59 @@ func (c *Controller) sampleLab(ctx context.Context, lab Lab, now time.Time) erro
 		}
 	}
 
-	target, err := TargetWeights(lab.Instances)
-	if err != nil || !eligibleInstances(lab.Instances) {
-		state.capacityFingerprint = ""
+	if !eligibleInstances(lab.Instances) {
+		state.configurationFingerprint = ""
+		state.configurationSamples = 0
 		state.stableSamples = 0
 		state.status = StatusConverging
 		state.targetWeights = nil
 		c.saveState(lab.ID, state)
 		return nil
 	}
-	fingerprint := CapacityFingerprint(lab.Instances)
-	if fingerprint != state.capacityFingerprint {
-		state.capacityFingerprint = fingerprint
-		state.stableSamples = 1
+	loadRatios := c.sampleLoadRatios(lab.ID, lab.Instances, now)
+	target, err := TargetWeights(lab.Instances, loadRatios)
+	if err != nil {
+		state.configurationFingerprint = ""
+		state.configurationSamples = 0
+		state.stableSamples = 0
+		state.status = StatusConverging
+		state.targetWeights = nil
+		c.saveState(lab.ID, state)
+		return nil
+	}
+	fingerprint := ConfigurationFingerprint(lab.Instances)
+	if fingerprint != state.configurationFingerprint {
+		state.configurationFingerprint = fingerprint
+		state.configurationSamples = 1
+		state.stableSamples = 0
 		state.failureCount = 0
 		state.nextRetry = time.Time{}
 		state.lastError = nil
-	} else if state.stableSamples < c.config.StableSamples {
-		state.stableSamples++
+	} else if state.configurationSamples < c.config.StableSamples {
+		state.configurationSamples++
 	}
 	state.targetWeights = target
-	if state.stableSamples < c.config.StableSamples {
+	if state.configurationSamples < c.config.StableSamples {
 		state.status = StatusConverging
 		c.saveState(lab.ID, state)
 		return nil
 	}
-	if WeightsEqual(lab.Instances, target) {
-		state.status = StatusStable
+	if WeightsWithinShareThreshold(lab.Instances, target) {
+		if state.stableSamples < c.config.StableSamples {
+			state.stableSamples++
+		}
+		if state.stableSamples >= c.config.StableSamples {
+			state.status = StatusStable
+		} else {
+			state.status = StatusConverging
+		}
 		state.failureCount = 0
 		state.nextRetry = time.Time{}
 		state.lastError = nil
 		c.saveState(lab.ID, state)
 		return nil
 	}
+	state.stableSamples = 0
 	if !state.nextRetry.IsZero() && now.Before(state.nextRetry) {
 		state.status = StatusDegraded
 		c.saveState(lab.ID, state)
@@ -204,7 +247,9 @@ func (c *Controller) sampleLab(ctx context.Context, lab Lab, now time.Time) erro
 		state.status = StatusConverging
 	case errors.Is(err, ErrNoChange):
 		state.status = StatusStable
+		state.stableSamples = c.config.StableSamples
 	case errors.Is(err, ErrStale):
+		state.configurationSamples = 0
 		state.stableSamples = 0
 		state.status = StatusConverging
 	default:
@@ -244,7 +289,9 @@ func eligibleInstances(instances []Instance) bool {
 	}
 	for _, instance := range instances {
 		if instance.ID == "" || instance.Status != "running" ||
-			instance.EffectiveCapacity <= 0 || instance.CurrentWeight <= 0 {
+			instance.ContainerID == "" ||
+			instance.ProcessingSpeed <= 0 || instance.MaxLoad <= 0 ||
+			instance.CurrentWeight <= 0 {
 			return false
 		}
 	}

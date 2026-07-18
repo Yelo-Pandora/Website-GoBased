@@ -4,38 +4,72 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
+	"math"
 	"sort"
 	"strconv"
 	"strings"
 )
 
-// TargetWeights reduces effective capacities to their smallest integer ratio.
-func TargetWeights(instances []Instance) ([]Weight, error) {
+const (
+	loadBalanceThreshold = 0.05
+	minimumCorrection    = 0.25
+	maximumCorrection    = 1.75
+	weightShareThreshold = 0.03
+)
+
+// TargetWeights calculates processing-speed weights with proportional load feedback.
+func TargetWeights(instances []Instance, loadRatios map[string]float64) ([]Weight, error) {
 	if len(instances) == 0 {
 		return nil, errors.New("adaptive instances are required")
 	}
 	values := append([]Instance(nil), instances...)
 	sort.Slice(values, func(i, j int) bool { return values[i].ID < values[j].ID })
-	divisor := 0
+	minimumRatio := 1.0
+	maximumRatio := 0.0
+	totalRatio := 0.0
 	for _, instance := range values {
-		if instance.ID == "" || instance.EffectiveCapacity <= 0 {
-			return nil, errors.New("adaptive instance capacity is invalid")
+		if instance.ID == "" || instance.ProcessingSpeed <= 0 || instance.MaxLoad <= 0 {
+			return nil, errors.New("adaptive instance load model is invalid")
 		}
-		divisor = greatestCommonDivisor(divisor, instance.EffectiveCapacity)
+		ratio := loadRatios[instance.ID]
+		if ratio < 0 || ratio > 1 {
+			return nil, errors.New("adaptive instance load ratio is invalid")
+		}
+		minimumRatio = min(minimumRatio, ratio)
+		maximumRatio = max(maximumRatio, ratio)
+		totalRatio += ratio
+	}
+	averageRatio := totalRatio / float64(len(values))
+	balanced := maximumRatio-minimumRatio <= loadBalanceThreshold
+	scores := make([]float64, len(values))
+	maximumScore := 0.0
+	for index, instance := range values {
+		correction := 1.0
+		if !balanced {
+			correction = min(
+				maximumCorrection,
+				max(minimumCorrection, 1+averageRatio-loadRatios[instance.ID]),
+			)
+		}
+		scores[index] = float64(instance.ProcessingSpeed) * correction
+		maximumScore = max(maximumScore, scores[index])
 	}
 	weights := make([]Weight, 0, len(values))
-	for _, instance := range values {
-		weight := instance.EffectiveCapacity / divisor
-		if weight < 1 || weight > 100 {
-			return nil, errors.New("adaptive target weight is outside the allowed range")
-		}
+	divisor := 0
+	for index, instance := range values {
+		weight := int(math.Round(scores[index] / maximumScore * 100))
+		weight = min(100, max(1, weight))
+		divisor = greatestCommonDivisor(divisor, weight)
 		weights = append(weights, Weight{InstanceID: instance.ID, Weight: weight})
+	}
+	for index := range weights {
+		weights[index].Weight /= divisor
 	}
 	return weights, nil
 }
 
-// CapacityFingerprint identifies the sampled instance set and capacities.
-func CapacityFingerprint(instances []Instance) string {
+// ConfigurationFingerprint identifies the sampled instance set and load model.
+func ConfigurationFingerprint(instances []Instance) string {
 	return fingerprint(instances, false)
 }
 
@@ -64,6 +98,37 @@ func WeightsEqual(instances []Instance, weights []Weight) bool {
 	return true
 }
 
+// WeightsWithinShareThreshold reports whether routing shares differ materially.
+func WeightsWithinShareThreshold(instances []Instance, weights []Weight) bool {
+	if len(instances) == 0 || len(instances) != len(weights) {
+		return false
+	}
+	targets := make(map[string]int, len(weights))
+	totalCurrent := 0
+	totalTarget := 0
+	for _, weight := range weights {
+		if weight.InstanceID == "" || weight.Weight <= 0 || targets[weight.InstanceID] != 0 {
+			return false
+		}
+		targets[weight.InstanceID] = weight.Weight
+		totalTarget += weight.Weight
+	}
+	for _, instance := range instances {
+		if instance.CurrentWeight <= 0 || targets[instance.ID] == 0 {
+			return false
+		}
+		totalCurrent += instance.CurrentWeight
+	}
+	for _, instance := range instances {
+		currentShare := float64(instance.CurrentWeight) / float64(totalCurrent)
+		targetShare := float64(targets[instance.ID]) / float64(totalTarget)
+		if math.Abs(currentShare-targetShare) >= weightShareThreshold {
+			return false
+		}
+	}
+	return true
+}
+
 func fingerprint(instances []Instance, includeWeight bool) string {
 	values := append([]Instance(nil), instances...)
 	sort.Slice(values, func(i, j int) bool { return values[i].ID < values[j].ID })
@@ -71,9 +136,13 @@ func fingerprint(instances []Instance, includeWeight bool) string {
 	for _, instance := range values {
 		body.WriteString(instance.ID)
 		body.WriteByte(':')
+		body.WriteString(instance.ContainerID)
+		body.WriteByte(':')
 		body.WriteString(instance.Status)
 		body.WriteByte(':')
-		body.WriteString(strconv.Itoa(instance.EffectiveCapacity))
+		body.WriteString(strconv.Itoa(instance.ProcessingSpeed))
+		body.WriteByte(':')
+		body.WriteString(strconv.Itoa(instance.MaxLoad))
 		if includeWeight {
 			body.WriteByte(':')
 			body.WriteString(strconv.Itoa(instance.CurrentWeight))

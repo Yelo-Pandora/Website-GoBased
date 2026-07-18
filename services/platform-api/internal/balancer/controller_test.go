@@ -44,14 +44,14 @@ func (s *storeStub) FindAdjustment(_ context.Context, operationID string) (Opera
 	return s.operations[operationID], nil
 }
 
-func TestTargetWeightsReducesCapacityRatio(t *testing.T) {
+func TestTargetWeightsUsesProcessingSpeedBaseline(t *testing.T) {
 	t.Parallel()
 
 	weights, err := TargetWeights([]Instance{
-		{ID: "app-3", EffectiveCapacity: 30},
-		{ID: "app-1", EffectiveCapacity: 100},
-		{ID: "app-2", EffectiveCapacity: 100},
-	})
+		{ID: "app-3", ProcessingSpeed: 6, MaxLoad: 100},
+		{ID: "app-1", ProcessingSpeed: 20, MaxLoad: 100},
+		{ID: "app-2", ProcessingSpeed: 20, MaxLoad: 100},
+	}, nil)
 	if err != nil {
 		t.Fatalf("TargetWeights() error = %v", err)
 	}
@@ -60,15 +60,65 @@ func TestTargetWeightsReducesCapacityRatio(t *testing.T) {
 		{InstanceID: "app-2", Weight: 10},
 		{InstanceID: "app-3", Weight: 3},
 	}
-	for i := range want {
-		if weights[i] != want[i] {
-			t.Fatalf("weights[%d] = %#v; want %#v", i, weights[i], want[i])
+	for index := range want {
+		if weights[index] != want[index] {
+			t.Fatalf("weights[%d] = %#v; want %#v", index, weights[index], want[index])
 		}
 	}
 }
 
-func TestControllerEnqueuesAfterThreeStableSamplesWithoutTraffic(t *testing.T) {
-	store := &storeStub{labs: []Lab{adaptiveLab(100, 30, 100, 100)}}
+func TestTargetWeightsReducesHighLoadInstance(t *testing.T) {
+	t.Parallel()
+
+	weights, err := TargetWeights([]Instance{
+		{ID: "app-1", ProcessingSpeed: 20, MaxLoad: 100},
+		{ID: "app-2", ProcessingSpeed: 20, MaxLoad: 100},
+	}, map[string]float64{"app-1": 0.9, "app-2": 0.1})
+	if err != nil {
+		t.Fatalf("TargetWeights() error = %v", err)
+	}
+	if weights[0].Weight >= weights[1].Weight {
+		t.Fatalf("weights = %#v; high-load instance was not reduced", weights)
+	}
+}
+
+func TestTargetWeightsIgnoresBalancedLoadSpread(t *testing.T) {
+	t.Parallel()
+
+	weights, err := TargetWeights([]Instance{
+		{ID: "app-1", ProcessingSpeed: 20, MaxLoad: 100},
+		{ID: "app-2", ProcessingSpeed: 20, MaxLoad: 100},
+	}, map[string]float64{"app-1": 0.5, "app-2": 0.54})
+	if err != nil {
+		t.Fatalf("TargetWeights() error = %v", err)
+	}
+	if weights[0].Weight != 1 || weights[1].Weight != 1 {
+		t.Fatalf("weights = %#v; want equal baseline", weights)
+	}
+}
+
+func TestWeightsWithinShareThreshold(t *testing.T) {
+	t.Parallel()
+
+	target := []Weight{{InstanceID: "app-1", Weight: 1}, {InstanceID: "app-2", Weight: 1}}
+	closeWeights := []Instance{
+		{ID: "app-1", CurrentWeight: 51},
+		{ID: "app-2", CurrentWeight: 49},
+	}
+	if !WeightsWithinShareThreshold(closeWeights, target) {
+		t.Fatal("close weight shares were treated as material")
+	}
+	farWeights := []Instance{
+		{ID: "app-1", CurrentWeight: 60},
+		{ID: "app-2", CurrentWeight: 40},
+	}
+	if WeightsWithinShareThreshold(farWeights, target) {
+		t.Fatal("far weight shares were treated as equivalent")
+	}
+}
+
+func TestControllerEnqueuesAfterThreeConfigurationSamples(t *testing.T) {
+	store := &storeStub{labs: []Lab{adaptiveLab(20, 6, 100, 100)}}
 	controller := newTestController(t, store)
 	controller.newOperationID = func() (string, error) { return "balancer-test", nil }
 	for range 3 {
@@ -81,15 +131,12 @@ func TestControllerEnqueuesAfterThreeStableSamplesWithoutTraffic(t *testing.T) {
 		got[0].Weight != 10 || got[1].Weight != 3 {
 		t.Fatalf("target weights = %#v", got)
 	}
-	if view := controller.View("lab-test", store.labs[0].Instances); view.Status != StatusConverging {
-		t.Fatalf("view status = %q; want %q", view.Status, StatusConverging)
-	}
 }
 
-func TestControllerDoesNotReloadMatchingWeights(t *testing.T) {
-	store := &storeStub{labs: []Lab{adaptiveLab(100, 30, 10, 3)}}
+func TestControllerBecomesStableAfterThreeNoChangeSamples(t *testing.T) {
+	store := &storeStub{labs: []Lab{adaptiveLab(20, 6, 10, 3)}}
 	controller := newTestController(t, store)
-	for range 3 {
+	for range 5 {
 		controller.sample(context.Background())
 	}
 	if len(store.enqueued) != 0 {
@@ -101,7 +148,7 @@ func TestControllerDoesNotReloadMatchingWeights(t *testing.T) {
 }
 
 func TestControllerRetriesFailuresAfterBackoff(t *testing.T) {
-	store := &storeStub{labs: []Lab{adaptiveLab(100, 30, 100, 100)}}
+	store := &storeStub{labs: []Lab{adaptiveLab(20, 6, 100, 100)}}
 	controller := newTestController(t, store)
 	now := time.Date(2026, time.July, 17, 12, 0, 0, 0, time.UTC)
 	controller.now = func() time.Time { return now }
@@ -137,12 +184,12 @@ func TestControllerRetriesFailuresAfterBackoff(t *testing.T) {
 	}
 }
 
-func TestControllerResetsStabilityWhenCapacityChanges(t *testing.T) {
-	store := &storeStub{labs: []Lab{adaptiveLab(100, 100, 100, 100)}}
+func TestControllerResetsConfigurationSamplesWhenSpeedChanges(t *testing.T) {
+	store := &storeStub{labs: []Lab{adaptiveLab(20, 20, 1, 1)}}
 	controller := newTestController(t, store)
 	controller.sample(context.Background())
 	controller.sample(context.Background())
-	store.labs[0].Instances[1].EffectiveCapacity = 30
+	store.labs[0].Instances[1].ProcessingSpeed = 6
 	controller.sample(context.Background())
 	controller.sample(context.Background())
 	if len(store.enqueued) != 0 {
@@ -150,35 +197,55 @@ func TestControllerResetsStabilityWhenCapacityChanges(t *testing.T) {
 	}
 }
 
-func TestControllerSmoothsObservedLoadAndReportsCapacityBoundary(t *testing.T) {
-	store := &storeStub{}
-	controller := newTestController(t, store)
+func TestControllerEstimatesLoadAndUpdatesEWMAWithoutNewTraffic(t *testing.T) {
+	controller := newTestController(t, &storeStub{})
 	now := time.Date(2026, time.July, 17, 12, 0, 0, 0, time.UTC)
 	controller.now = func() time.Time { return now }
-	result := protocol.TrafficBatchResult{TargetInstanceID: "app-1"}
-	result.InstanceState.LoadRatio = 0.2
-	controller.Observe("lab-test", result)
-	result.InstanceState.LoadRatio = 1.4
-	result.DroppedUnits = 1
-	controller.Observe("lab-test", result)
-	view := controller.View("lab-test", []Instance{{
-		ID: "app-1", Status: "running", EffectiveCapacity: 100, CurrentWeight: 1,
-	}})
-	if len(view.SmoothedLoads) != 1 ||
-		math.Abs(view.SmoothedLoads[0].LoadRatio-0.8) > 0.000001 {
-		t.Fatalf("smoothed loads = %#v", view.SmoothedLoads)
+	instances := []Instance{{
+		ID: "app-1", ContainerID: "container-app-1", Status: "running",
+		ProcessingSpeed: 20, MaxLoad: 100, CurrentWeight: 1,
+	}}
+	controller.Observe("lab-test", lab.Instance{
+		ID: "app-1", ContainerID: "container-app-1", ProcessingSpeed: 20, MaxLoad: 100,
+	}, protocol.TrafficBatchResult{
+		TargetInstanceID: "app-1",
+		InstanceState: protocol.InstanceState{
+			ProcessingSpeed: 20, MaxLoad: 100, CurrentLoad: 80,
+			LoadRatio: 0.8, ObservedAt: now,
+		},
+	})
+	first := controller.sampleLoadRatios("lab-test", instances, now)
+	if first["app-1"] != 0.8 {
+		t.Fatalf("first smoothed ratio = %v; want 0.8", first["app-1"])
 	}
-	if view.CapacityNotice != "cluster_overloaded" {
-		t.Fatalf("capacity notice = %q", view.CapacityNotice)
+	now = now.Add(2 * time.Second)
+	second := controller.sampleLoadRatios("lab-test", instances, now)
+	if math.Abs(second["app-1"]-0.6) > 0.000001 {
+		t.Fatalf("second smoothed ratio = %v; want 0.6", second["app-1"])
+	}
+
+	snapshot := lab.Snapshot{
+		Lab: lab.Session{ID: "lab-test", BalancingMode: "fixed"},
+		Topology: lab.Topology{Instances: []lab.Instance{{
+			ID: "app-1", ContainerID: "container-app-1", Status: "running",
+			ProcessingSpeed: 20, MaxLoad: 100,
+		}}},
+	}
+	controller.DecorateSnapshot(&snapshot)
+	if snapshot.Topology.Instances[0].CurrentLoad != 40 ||
+		snapshot.Topology.Instances[0].LoadRatio != 0.4 || snapshot.Balancer != nil {
+		t.Fatalf("fixed snapshot = %#v", snapshot)
 	}
 }
 
-func TestControllerDecoratesOnlyAdaptiveSnapshots(t *testing.T) {
+func TestControllerDecoratesAdaptiveSnapshot(t *testing.T) {
 	controller := newTestController(t, &storeStub{})
 	snapshot := lab.Snapshot{
 		Lab: lab.Session{ID: "lab-test", BalancingMode: "adaptive"},
 		Topology: lab.Topology{Instances: []lab.Instance{{
-			ID: "app-1", Status: "running", EffectiveCapacity: 100, CurrentWeight: 100,
+			ID: "app-1", ContainerID: "container-app-1", Status: "running",
+			ProcessingSpeed: 20, MaxLoad: 100,
+			CurrentWeight: 100,
 		}}},
 	}
 	controller.DecorateSnapshot(&snapshot)
@@ -186,17 +253,38 @@ func TestControllerDecoratesOnlyAdaptiveSnapshots(t *testing.T) {
 		len(snapshot.Balancer.TargetWeights) != 1 {
 		t.Fatalf("adaptive snapshot = %#v", snapshot.Balancer)
 	}
-	snapshot.Lab.BalancingMode = "fixed"
-	snapshot.Balancer = nil
+}
+
+func TestControllerDiscardsLoadFromReplacedContainer(t *testing.T) {
+	controller := newTestController(t, &storeStub{})
+	now := time.Date(2026, time.July, 17, 12, 0, 0, 0, time.UTC)
+	controller.now = func() time.Time { return now }
+	controller.Observe("lab-test", lab.Instance{
+		ID: "app-1", ContainerID: "container-old", ProcessingSpeed: 20, MaxLoad: 100,
+	}, protocol.TrafficBatchResult{
+		TargetInstanceID: "app-1",
+		InstanceState: protocol.InstanceState{
+			ProcessingSpeed: 20, MaxLoad: 100, CurrentLoad: 80,
+			LoadRatio: 0.8, ObservedAt: now,
+		},
+	})
+	snapshot := lab.Snapshot{
+		Lab: lab.Session{ID: "lab-test", BalancingMode: "fixed"},
+		Topology: lab.Topology{Instances: []lab.Instance{{
+			ID: "app-1", ContainerID: "container-new", Status: "running",
+			ProcessingSpeed: 20, MaxLoad: 100, LoadState: "idle",
+		}}},
+	}
 	controller.DecorateSnapshot(&snapshot)
-	if snapshot.Balancer != nil {
-		t.Fatalf("fixed snapshot balancer = %#v; want nil", snapshot.Balancer)
+	instance := snapshot.Topology.Instances[0]
+	if instance.CurrentLoad != 0 || instance.LoadRatio != 0 || instance.LoadState != "idle" {
+		t.Fatalf("replaced instance = %#v", instance)
 	}
 }
 
 func adaptiveLab(
-	firstCapacity int,
-	secondCapacity int,
+	firstSpeed int,
+	secondSpeed int,
 	firstWeight int,
 	secondWeight int,
 ) Lab {
@@ -204,12 +292,14 @@ func adaptiveLab(
 		ID: "lab-test", UserID: 7,
 		Instances: []Instance{
 			{
-				ID: "app-1", Status: "running",
-				EffectiveCapacity: firstCapacity, CurrentWeight: firstWeight,
+				ID: "app-1", ContainerID: "container-app-1", Status: "running",
+				ProcessingSpeed: firstSpeed,
+				MaxLoad:         100, CurrentWeight: firstWeight,
 			},
 			{
-				ID: "app-2", Status: "running",
-				EffectiveCapacity: secondCapacity, CurrentWeight: secondWeight,
+				ID: "app-2", ContainerID: "container-app-2", Status: "running",
+				ProcessingSpeed: secondSpeed,
+				MaxLoad:         100, CurrentWeight: secondWeight,
 			},
 		},
 	}

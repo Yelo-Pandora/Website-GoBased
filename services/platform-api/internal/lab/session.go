@@ -85,18 +85,20 @@ type Session struct {
 
 // Instance is the persistent topology state for one application server.
 type Instance struct {
-	ID                 string  `json:"instanceId"`
-	Name               string  `json:"instanceName"`
-	ContainerID        string  `json:"-"`
-	Status             string  `json:"status"`
-	CPULimitCores      float64 `json:"cpuLimitCores"`
-	MemoryLimitMB      int     `json:"memoryLimitMb"`
-	PerformancePercent int     `json:"performancePercent"`
-	EffectiveCapacity  int     `json:"effectiveCapacity"`
-	CurrentWeight      int     `json:"currentWeight"`
-	RemainingCapacity  int     `json:"remainingCapacity"`
-	LoadRatio          float64 `json:"loadRatio"`
-	LoadState          string  `json:"loadState"`
+	ID                 string    `json:"instanceId"`
+	Name               string    `json:"instanceName"`
+	ContainerID        string    `json:"-"`
+	Status             string    `json:"status"`
+	CPULimitCores      float64   `json:"cpuLimitCores"`
+	MemoryLimitMB      int       `json:"memoryLimitMb"`
+	PerformancePercent int       `json:"performancePercent"`
+	ProcessingSpeed    int       `json:"processingSpeed"`
+	MaxLoad            int       `json:"maxLoad"`
+	CurrentWeight      int       `json:"currentWeight"`
+	CurrentLoad        float64   `json:"currentLoad"`
+	LoadRatio          float64   `json:"loadRatio"`
+	LoadState          string    `json:"loadState"`
+	ObservedAt         time.Time `json:"observedAt"`
 }
 
 // Resource is a persisted non-application resource owned by a lab.
@@ -480,8 +482,8 @@ func (s *Service) decorateDeadlines(session *Session) {
 
 func (s *Service) decorateTrafficSnapshot(snapshot *Snapshot) {
 	snapshot.TrafficPolicy = TrafficPolicy{
-		RequestUnits:         IntegerPolicy{Minimum: 1, Maximum: 100, Step: 1, Default: 60},
-		GenerationIntervalMS: IntegerPolicy{Minimum: 250, Maximum: 5000, Step: 250, Default: 1000},
+		RequestUnits:         IntegerPolicy{Minimum: 1, Maximum: 100, Step: 1, Default: 10},
+		GenerationIntervalMS: IntegerPolicy{Minimum: 250, Maximum: 5000, Step: 250, Default: 250},
 	}
 	snapshot.Topology.Nodes = []TopologyNode{
 		{ID: "user-pool", Type: "user_pool"},
@@ -490,8 +492,10 @@ func (s *Service) decorateTrafficSnapshot(snapshot *Snapshot) {
 	snapshot.Topology.Edges = []TopologyEdge{{From: "user-pool", To: "lab-gateway"}}
 	for index := range snapshot.Topology.Instances {
 		instance := &snapshot.Topology.Instances[index]
-		instance.RemainingCapacity = instance.EffectiveCapacity
+		instance.CurrentLoad = 0
+		instance.LoadRatio = 0
 		instance.LoadState = "idle"
+		instance.ObservedAt = s.now().UTC().Truncate(time.Microsecond)
 		snapshot.Topology.Nodes = append(snapshot.Topology.Nodes, TopologyNode{
 			ID: instance.ID, Type: "application",
 		})

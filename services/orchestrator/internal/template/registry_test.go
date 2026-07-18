@@ -52,9 +52,9 @@ func TestLoadResolvesContainerInheritance(t *testing.T) {
   "templateId":"scenario_v1","templateVersion":1,"scenarioType":"scenario",
   "resourceTemplates":{"application":"child_v1","database":"database_v1","network":"network_v1","nginxFragment":"nginx_v1"},
   "resources":{"baseCpuLimitCores":0.1,"memoryLimitMb":128,"pidsLimit":64},
-  "capacity":{"baseCapacity":100,"capacityWindowMs":1000,"initialPerformancePercent":100,"minPerformancePercent":20,"maxPerformancePercent":100},
+  "loadModel":{"baseProcessingSpeed":20,"maxLoad":100,"initialPerformancePercent":100,"minPerformancePercent":20,"maxPerformancePercent":100},
   "loadBalancing":{"initialWeight":100,"mode":"fixed"},
-  "orderSimulation":{"defaultBatchSize":60,"defaultGenerationIntervalMs":1000,"processingDelayMs":0,"overloadPolicy":"drop_excess","queueMode":"disabled","concurrencyControl":"mutex","preserveArrivalOrder":false},
+  "orderSimulation":{"defaultBatchSize":10,"defaultGenerationIntervalMs":250,"overloadPolicy":"drop_excess","concurrencyControl":"mutex"},
   "productSeeds":[]
 }`)
 

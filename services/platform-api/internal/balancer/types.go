@@ -67,10 +67,12 @@ func (c Config) validate() error {
 
 // Instance is the persisted control-plane state used by the balancer.
 type Instance struct {
-	ID                string
-	Status            string
-	EffectiveCapacity int
-	CurrentWeight     int
+	ID              string
+	ContainerID     string
+	Status          string
+	ProcessingSpeed int
+	MaxLoad         int
+	CurrentWeight   int
 }
 
 // Lab is one adaptive experiment and its application instances.

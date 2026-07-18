@@ -121,13 +121,13 @@ type Scenario struct {
 		MemoryLimitMB     int     `json:"memoryLimitMb"`
 		PidsLimit         int     `json:"pidsLimit"`
 	} `json:"resources"`
-	Capacity struct {
-		BaseCapacity              int `json:"baseCapacity"`
-		CapacityWindowMS          int `json:"capacityWindowMs"`
+	LoadModel struct {
+		BaseProcessingSpeed       int `json:"baseProcessingSpeed"`
+		MaxLoad                   int `json:"maxLoad"`
 		InitialPerformancePercent int `json:"initialPerformancePercent"`
 		MinPerformancePercent     int `json:"minPerformancePercent"`
 		MaxPerformancePercent     int `json:"maxPerformancePercent"`
-	} `json:"capacity"`
+	} `json:"loadModel"`
 	LoadBalancing struct {
 		InitialWeight int    `json:"initialWeight"`
 		Mode          string `json:"mode"`
@@ -135,11 +135,8 @@ type Scenario struct {
 	OrderSimulation struct {
 		DefaultBatchSize            int    `json:"defaultBatchSize"`
 		DefaultGenerationIntervalMS int    `json:"defaultGenerationIntervalMs"`
-		ProcessingDelayMS           int    `json:"processingDelayMs"`
 		OverloadPolicy              string `json:"overloadPolicy"`
-		QueueMode                   string `json:"queueMode"`
 		ConcurrencyControl          string `json:"concurrencyControl"`
-		PreserveArrivalOrder        bool   `json:"preserveArrivalOrder"`
 	} `json:"orderSimulation"`
 	ProductSeeds []ProductSeed `json:"productSeeds"`
 }
@@ -324,11 +321,11 @@ func (r *Registry) validateScenario(value Scenario) error {
 	if value.Resources.BaseCPULimitCores <= 0 || value.Resources.MemoryLimitMB <= 0 || value.Resources.PidsLimit <= 0 {
 		return errors.New("scenario resource limits must be positive")
 	}
-	if value.Capacity.BaseCapacity <= 0 || value.Capacity.CapacityWindowMS <= 0 ||
-		value.Capacity.MinPerformancePercent <= 0 ||
-		value.Capacity.InitialPerformancePercent < value.Capacity.MinPerformancePercent ||
-		value.Capacity.InitialPerformancePercent > value.Capacity.MaxPerformancePercent {
-		return errors.New("scenario capacity settings are invalid")
+	if value.LoadModel.BaseProcessingSpeed <= 0 || value.LoadModel.MaxLoad <= 0 ||
+		value.LoadModel.MinPerformancePercent <= 0 ||
+		value.LoadModel.InitialPerformancePercent < value.LoadModel.MinPerformancePercent ||
+		value.LoadModel.InitialPerformancePercent > value.LoadModel.MaxPerformancePercent {
+		return errors.New("scenario load model settings are invalid")
 	}
 	if value.LoadBalancing.InitialWeight <= 0 || value.LoadBalancing.Mode == "" {
 		return errors.New("scenario load balancing settings are invalid")

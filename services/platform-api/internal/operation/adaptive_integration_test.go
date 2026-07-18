@@ -75,9 +75,9 @@ func TestCompleteAdaptiveWeightsDoesNotRefreshActivityIntegration(t *testing.T) 
 	if _, err := database.ExecContext(ctx, `
 		INSERT INTO lab_instances (
 			lab_id, instance_name, container_id, status, cpu_limit_cores,
-			memory_limit_mb, performance_percent, effective_capacity,
+			memory_limit_mb, performance_percent, processing_speed, max_load,
 			current_weight, created_at, updated_at
-		) VALUES (?, 'app-1', ?, 'running', 0.1, 128, 100, 100, 100, ?, ?)`,
+		) VALUES (?, 'app-1', ?, 'running', 0.1, 128, 100, 20, 100, 100, ?, ?)`,
 		labID, fmt.Sprintf("container-%d", stamp), now, now,
 	); err != nil {
 		t.Fatalf("insert test instance: %v", err)

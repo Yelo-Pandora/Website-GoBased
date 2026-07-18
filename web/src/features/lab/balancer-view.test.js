@@ -3,12 +3,12 @@ import test from 'node:test';
 
 import {buildBalancerView} from './balancer-view.js';
 
-test('builds a simple capacity-to-weight summary', () => {
+test('builds a simple processing-speed-to-weight summary', () => {
   const view = buildBalancerView(
     [
-      {instanceId: 'app-1', effectiveCapacity: 100},
-      {instanceId: 'app-2', effectiveCapacity: 100},
-      {instanceId: 'app-3', effectiveCapacity: 30},
+      {instanceId: 'app-1', processingSpeed: 20},
+      {instanceId: 'app-2', processingSpeed: 20},
+      {instanceId: 'app-3', processingSpeed: 6},
     ],
     {
       status: 'stable',
@@ -20,7 +20,7 @@ test('builds a simple capacity-to-weight summary', () => {
     },
   );
   assert.equal(view.statusText, '自适应权重已稳定');
-  assert.equal(view.capacityRatio, '100:100:30');
+  assert.equal(view.processingSpeedRatio, '20:20:6');
   assert.equal(view.weightRatio, '10:10:3');
   assert.equal(view.targetFor('app-3'), 3);
 });

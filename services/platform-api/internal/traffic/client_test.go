@@ -35,22 +35,20 @@ func TestClientFixesGatewayHostAndDecodesResult(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Submit() error = %v", err)
 	}
-	if result.TargetInstanceID != "app-1" || result.ProcessedUnits != 10 {
+	if result.TargetInstanceID != "app-1" || result.AcceptedUnits != 10 {
 		t.Fatalf("result = %#v", result)
 	}
 }
 
 func validTrafficResult() protocol.TrafficBatchResult {
-	startedAt := time.Date(2026, 7, 16, 12, 0, 0, 0, time.UTC)
+	observedAt := time.Date(2026, 7, 17, 12, 0, 0, 0, time.UTC)
 	return protocol.TrafficBatchResult{
-		BatchID: "batch-test", LabID: "lab-test", Status: "processed",
-		OccurredAt: startedAt, TargetInstanceID: "app-1",
-		ReceivedUnits: 10, ProcessedUnits: 10,
+		BatchID: "batch-test", LabID: "lab-test", Status: "accepted",
+		OccurredAt: observedAt, TargetInstanceID: "app-1",
+		ReceivedUnits: 10, AcceptedUnits: 10,
 		InstanceState: protocol.InstanceState{
-			EffectiveCapacity: 100, RemainingCapacity: 90,
-			LoadRatio: 0.1, LoadState: "idle",
-			CapacityWindowStartedAt: startedAt,
-			CapacityWindowEndsAt:    startedAt.Add(time.Second),
+			ProcessingSpeed: 20, MaxLoad: 100, CurrentLoad: 10,
+			LoadRatio: 0.1, LoadState: "idle", ObservedAt: observedAt,
 		},
 	}
 }

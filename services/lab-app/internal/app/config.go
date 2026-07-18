@@ -13,13 +13,13 @@ import (
 
 // Config contains lab application runtime identity and settings.
 type Config struct {
-	Addr              string
-	LabID             string
-	InstanceID        string
-	ScenarioType      string
-	DatabaseDSN       string
-	EffectiveCapacity int
-	CapacityWindow    time.Duration
+	Addr            string
+	LabID           string
+	InstanceID      string
+	ScenarioType    string
+	DatabaseDSN     string
+	ProcessingSpeed int
+	MaxLoad         int
 }
 
 // LoadConfig loads lab application settings.
@@ -36,13 +36,13 @@ func LoadConfig() (Config, error) {
 	if err != nil {
 		return Config{}, err
 	}
-	effectiveCapacity, err := sharedconfig.Int("EFFECTIVE_CAPACITY", 100)
-	if err != nil || effectiveCapacity <= 0 {
-		return Config{}, fmt.Errorf("EFFECTIVE_CAPACITY must be a positive integer")
+	processingSpeed, err := sharedconfig.Int("PROCESSING_SPEED", 20)
+	if err != nil || processingSpeed <= 0 {
+		return Config{}, fmt.Errorf("PROCESSING_SPEED must be a positive integer")
 	}
-	capacityWindowMS, err := sharedconfig.Int("CAPACITY_WINDOW_MS", 1000)
-	if err != nil || capacityWindowMS <= 0 {
-		return Config{}, fmt.Errorf("CAPACITY_WINDOW_MS must be a positive integer")
+	maxLoad, err := sharedconfig.Int("MAX_LOAD", 100)
+	if err != nil || maxLoad <= 0 {
+		return Config{}, fmt.Errorf("MAX_LOAD must be a positive integer")
 	}
 	databaseConfig := mysql.NewConfig()
 	databaseConfig.User = databaseUser
@@ -59,12 +59,12 @@ func LoadConfig() (Config, error) {
 		"charset": "utf8mb4",
 	}
 	return Config{
-		Addr:              sharedconfig.String("LAB_APP_ADDR", ":8080"),
-		LabID:             sharedconfig.String("LAB_ID", "unassigned"),
-		InstanceID:        sharedconfig.String("INSTANCE_ID", "unassigned"),
-		ScenarioType:      sharedconfig.String("SCENARIO_TYPE", "scaffold"),
-		DatabaseDSN:       databaseConfig.FormatDSN(),
-		EffectiveCapacity: effectiveCapacity,
-		CapacityWindow:    time.Duration(capacityWindowMS) * time.Millisecond,
+		Addr:            sharedconfig.String("LAB_APP_ADDR", ":8080"),
+		LabID:           sharedconfig.String("LAB_ID", "unassigned"),
+		InstanceID:      sharedconfig.String("INSTANCE_ID", "unassigned"),
+		ScenarioType:    sharedconfig.String("SCENARIO_TYPE", "scaffold"),
+		DatabaseDSN:     databaseConfig.FormatDSN(),
+		ProcessingSpeed: processingSpeed,
+		MaxLoad:         maxLoad,
 	}, nil
 }

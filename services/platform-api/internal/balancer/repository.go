@@ -23,8 +23,8 @@ func NewRepository(database *sql.DB) *Repository {
 func (r *Repository) ListAdaptiveLabs(ctx context.Context) ([]Lab, error) {
 	rows, err := r.database.QueryContext(ctx, `
 		SELECT
-			s.id, s.user_id, i.instance_name, i.status,
-			i.effective_capacity, i.current_weight
+			s.id, s.user_id, i.instance_name, i.container_id, i.status,
+			i.processing_speed, i.max_load, i.current_weight
 		FROM lab_sessions AS s
 		JOIN lab_instances AS i ON i.lab_id = s.id
 		WHERE s.scenario_type = 'application_cluster'
@@ -44,8 +44,10 @@ func (r *Repository) ListAdaptiveLabs(ctx context.Context) ([]Lab, error) {
 			&labID,
 			&userID,
 			&instance.ID,
+			&instance.ContainerID,
 			&instance.Status,
-			&instance.EffectiveCapacity,
+			&instance.ProcessingSpeed,
+			&instance.MaxLoad,
 			&instance.CurrentWeight,
 		); err != nil {
 			return nil, fmt.Errorf("scan adaptive lab: %w", err)
@@ -192,7 +194,8 @@ func (r *Repository) FindAdjustment(
 
 func lockInstances(ctx context.Context, tx *sql.Tx, labID string) ([]Instance, error) {
 	rows, err := tx.QueryContext(ctx, `
-		SELECT instance_name, status, effective_capacity, current_weight
+		SELECT instance_name, container_id, status, processing_speed, max_load,
+			current_weight
 		FROM lab_instances
 		WHERE lab_id = ?
 		ORDER BY instance_name
@@ -206,8 +209,10 @@ func lockInstances(ctx context.Context, tx *sql.Tx, labID string) ([]Instance, e
 		var instance Instance
 		if err := rows.Scan(
 			&instance.ID,
+			&instance.ContainerID,
 			&instance.Status,
-			&instance.EffectiveCapacity,
+			&instance.ProcessingSpeed,
+			&instance.MaxLoad,
 			&instance.CurrentWeight,
 		); err != nil {
 			return nil, fmt.Errorf("scan adaptive instance: %w", err)

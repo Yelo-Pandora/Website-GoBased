@@ -249,7 +249,8 @@ func ensureNoPendingTopologyAction(ctx context.Context, tx *sql.Tx, labID string
 func lockTopologyInstances(ctx context.Context, tx *sql.Tx, labID string) ([]Instance, error) {
 	rows, err := tx.QueryContext(ctx, `
 		SELECT instance_name, container_id, status, cpu_limit_cores,
-			memory_limit_mb, performance_percent, effective_capacity, current_weight
+			memory_limit_mb, performance_percent, processing_speed, max_load,
+			current_weight
 		FROM lab_instances
 		WHERE lab_id = ? AND status = 'running'
 		ORDER BY instance_name
@@ -264,7 +265,8 @@ func lockTopologyInstances(ctx context.Context, tx *sql.Tx, labID string) ([]Ins
 		if err := rows.Scan(
 			&instance.Name, &instance.ContainerID, &instance.Status,
 			&instance.CPULimitCores, &instance.MemoryLimitMB,
-			&instance.PerformancePercent, &instance.EffectiveCapacity,
+			&instance.PerformancePercent, &instance.ProcessingSpeed,
+			&instance.MaxLoad,
 			&instance.CurrentWeight,
 		); err != nil {
 			return nil, fmt.Errorf("scan topology instance: %w", err)

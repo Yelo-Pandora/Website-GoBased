@@ -36,12 +36,18 @@ type limiterStub bool
 func (s limiterStub) Allow(uint64) bool { return bool(s) }
 
 type observerStub struct {
-	labID  string
-	result protocol.TrafficBatchResult
+	labID    string
+	instance lab.Instance
+	result   protocol.TrafficBatchResult
 }
 
-func (s *observerStub) Observe(labID string, result protocol.TrafficBatchResult) {
+func (s *observerStub) Observe(
+	labID string,
+	instance lab.Instance,
+	result protocol.TrafficBatchResult,
+) {
 	s.labID = labID
+	s.instance = instance
 	s.result = result
 }
 
@@ -98,14 +104,18 @@ func TestServiceObservesOnlyValidatedResults(t *testing.T) {
 	); err != nil {
 		t.Fatalf("Submit() error = %v", err)
 	}
-	if observer.labID != "lab-test" || observer.result.TargetInstanceID != "app-1" {
+	if observer.labID != "lab-test" || observer.instance.ContainerID != "container-app-1" ||
+		observer.result.TargetInstanceID != "app-1" {
 		t.Fatalf("observer capture = %#v", observer)
 	}
 }
 
 func runningSnapshot() lab.Snapshot {
 	return lab.Snapshot{
-		Lab:      lab.Session{ID: "lab-test", Status: lab.StatusRunning},
-		Topology: lab.Topology{Instances: []lab.Instance{{ID: "app-1", Name: "app-1"}}},
+		Lab: lab.Session{ID: "lab-test", Status: lab.StatusRunning},
+		Topology: lab.Topology{Instances: []lab.Instance{{
+			ID: "app-1", Name: "app-1", ContainerID: "container-app-1",
+			ProcessingSpeed: 20, MaxLoad: 100,
+		}}},
 	}
 }

@@ -271,7 +271,7 @@ func (s *Service) provision(
 			appImage,
 			names,
 			instanceName,
-			scenario.Capacity.InitialPerformancePercent,
+			scenario.LoadModel.InitialPerformancePercent,
 		)
 		if err != nil {
 			return nil, fail("DOCKER_UNAVAILABLE", "application instance could not be provisioned", err)
@@ -282,11 +282,12 @@ func (s *Service) provision(
 			"containerName": container.Name,
 			"status":        "running",
 			"cpuLimitCores": scenario.Resources.BaseCPULimitCores *
-				float64(scenario.Capacity.InitialPerformancePercent) / 100,
+				float64(scenario.LoadModel.InitialPerformancePercent) / 100,
 			"memoryLimitMb":      scenario.Resources.MemoryLimitMB,
-			"performancePercent": scenario.Capacity.InitialPerformancePercent,
-			"effectiveCapacity": scenario.Capacity.BaseCapacity *
-				scenario.Capacity.InitialPerformancePercent / 100,
+			"performancePercent": scenario.LoadModel.InitialPerformancePercent,
+			"processingSpeed": scenario.LoadModel.BaseProcessingSpeed *
+				scenario.LoadModel.InitialPerformancePercent / 100,
+			"maxLoad":       scenario.LoadModel.MaxLoad,
 			"currentWeight": scenario.LoadBalancing.InitialWeight,
 		})
 		servers = append(servers, nginx.Server{
@@ -388,7 +389,7 @@ func (s *Service) createAppCommand(
 	}
 	performance := payload.PerformancePercent
 	if performance == 0 {
-		performance = scenario.Capacity.InitialPerformancePercent
+		performance = scenario.LoadModel.InitialPerformancePercent
 	}
 	if !validPerformance(scenario, performance) {
 		return nil, reject("INVALID_COMMAND", "performance percentage is outside the scenario range", nil)
@@ -416,7 +417,8 @@ func (s *Service) createAppCommand(
 		"cpuLimitCores":      scenario.Resources.BaseCPULimitCores * float64(performance) / 100,
 		"memoryLimitMb":      scenario.Resources.MemoryLimitMB,
 		"performancePercent": performance,
-		"effectiveCapacity":  scenario.Capacity.BaseCapacity * performance / 100,
+		"processingSpeed":    scenario.LoadModel.BaseProcessingSpeed * performance / 100,
+		"maxLoad":            scenario.LoadModel.MaxLoad,
 		"currentWeight":      scenario.LoadBalancing.InitialWeight,
 	}, nil
 }
@@ -494,7 +496,8 @@ func (s *Service) updateAppCapacity(
 		"performancePercent": payload.PerformancePercent,
 		"cpuLimitCores":      cpuCores,
 		"memoryLimitMb":      scenario.Resources.MemoryLimitMB,
-		"effectiveCapacity":  scenario.Capacity.BaseCapacity * payload.PerformancePercent / 100,
+		"processingSpeed":    scenario.LoadModel.BaseProcessingSpeed * payload.PerformancePercent / 100,
+		"maxLoad":            scenario.LoadModel.MaxLoad,
 		"currentWeight":      scenario.LoadBalancing.InitialWeight,
 	}, nil
 }
@@ -767,9 +770,11 @@ func (s *Service) ensureApp(
 			"MYSQL_DATABASE": names.database, "MYSQL_USER": names.databaseUser,
 			"MYSQL_PASSWORD":      password,
 			"PERFORMANCE_PERCENT": strconv.Itoa(performance),
-			"EFFECTIVE_CAPACITY":  strconv.Itoa(scenario.Capacity.BaseCapacity * performance / 100),
-			"CAPACITY_WINDOW_MS":  strconv.Itoa(scenario.Capacity.CapacityWindowMS),
-			"TZ":                  "UTC",
+			"PROCESSING_SPEED": strconv.Itoa(
+				scenario.LoadModel.BaseProcessingSpeed * performance / 100,
+			),
+			"MAX_LOAD": strconv.Itoa(scenario.LoadModel.MaxLoad),
+			"TZ":       "UTC",
 		},
 		Labels: labels, NetworkName: names.network,
 		NetworkAliases: []string{names.appContainer(instanceName)},
@@ -1063,8 +1068,8 @@ func nanoCPUs(cores float64) int64 {
 }
 
 func validPerformance(scenario templates.Scenario, value int) bool {
-	return value >= scenario.Capacity.MinPerformancePercent &&
-		value <= scenario.Capacity.MaxPerformancePercent && value%10 == 0
+	return value >= scenario.LoadModel.MinPerformancePercent &&
+		value <= scenario.LoadModel.MaxPerformancePercent && value%10 == 0
 }
 
 func validateEnvelope(command protocol.Command) (string, string) {

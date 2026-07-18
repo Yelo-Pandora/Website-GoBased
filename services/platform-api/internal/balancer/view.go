@@ -1,6 +1,7 @@
 package balancer
 
 import (
+	"math"
 	"sort"
 	"time"
 
@@ -9,11 +10,19 @@ import (
 )
 
 // Observe records one already validated synchronous traffic result.
-func (c *Controller) Observe(labID string, result protocol.TrafficBatchResult) {
-	if labID == "" || result.TargetInstanceID == "" || result.InstanceState.LoadRatio < 0 {
+func (c *Controller) Observe(
+	labID string,
+	instance labstate.Instance,
+	result protocol.TrafficBatchResult,
+) {
+	state := result.InstanceState
+	if labID == "" || result.TargetInstanceID == "" || instance.ID != result.TargetInstanceID ||
+		instance.ContainerID == "" || instance.ProcessingSpeed != state.ProcessingSpeed ||
+		instance.MaxLoad != state.MaxLoad || state.ProcessingSpeed <= 0 ||
+		state.MaxLoad <= 0 || state.CurrentLoad < 0 ||
+		state.CurrentLoad > float64(state.MaxLoad) || state.ObservedAt.IsZero() {
 		return
 	}
-	now := c.now().UTC()
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	instances := c.metrics[labID]
@@ -21,18 +30,61 @@ func (c *Controller) Observe(labID string, result protocol.TrafficBatchResult) {
 		instances = make(map[string]metricState)
 		c.metrics[labID] = instances
 	}
-	metric, exists := instances[result.TargetInstanceID]
-	if exists {
-		metric.smoothed = c.config.EWMAAlpha*result.InstanceState.LoadRatio +
-			(1-c.config.EWMAAlpha)*metric.smoothed
-	} else {
-		metric.smoothed = result.InstanceState.LoadRatio
+	metric := instances[result.TargetInstanceID]
+	if !metric.observedAt.IsZero() && state.ObservedAt.Before(metric.observedAt) {
+		return
 	}
-	metric.updatedAt = now
+	metric.currentLoad = state.CurrentLoad
+	metric.containerID = instance.ContainerID
+	metric.processingSpeed = state.ProcessingSpeed
+	metric.maxLoad = state.MaxLoad
+	metric.observedAt = state.ObservedAt.UTC()
 	if result.DroppedUnits > 0 {
-		metric.lastDropped = now
+		metric.lastDropped = state.ObservedAt.UTC()
 	}
 	instances[result.TargetInstanceID] = metric
+}
+
+func (c *Controller) sampleLoadRatios(
+	labID string,
+	instances []Instance,
+	now time.Time,
+) map[string]float64 {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	metrics := c.metrics[labID]
+	if metrics == nil {
+		metrics = make(map[string]metricState)
+		c.metrics[labID] = metrics
+	}
+	ratios := make(map[string]float64, len(instances))
+	for _, instance := range instances {
+		metric, exists := metrics[instance.ID]
+		if !exists || metric.containerID != instance.ContainerID ||
+			metric.processingSpeed != instance.ProcessingSpeed ||
+			metric.maxLoad != instance.MaxLoad {
+			metric = metricState{
+				containerID:     instance.ContainerID,
+				processingSpeed: instance.ProcessingSpeed,
+				maxLoad:         instance.MaxLoad,
+				observedAt:      now,
+			}
+		}
+		_, ratio := estimateMetric(metric, now)
+		if metric.smoothedAt.IsZero() {
+			metric.smoothed = ratio
+		} else {
+			metric.smoothed = c.config.EWMAAlpha*ratio +
+				(1-c.config.EWMAAlpha)*metric.smoothed
+		}
+		if ratio == 0 && metric.smoothed < 0.0005 {
+			metric.smoothed = 0
+		}
+		metric.smoothedAt = now
+		metrics[instance.ID] = metric
+		ratios[instance.ID] = metric.smoothed
+	}
+	return ratios
 }
 
 // View returns the current safe public status for one adaptive lab.
@@ -44,30 +96,32 @@ func (c *Controller) View(labID string, instances []Instance) View {
 	c.mu.RUnlock()
 	if !ok {
 		state.status = StatusConverging
-		state.targetWeights, _ = TargetWeights(instances)
+		state.targetWeights, _ = TargetWeights(instances, nil)
 	}
 	view := View{
 		Status:        state.status,
 		TargetWeights: append([]Weight(nil), state.targetWeights...),
-		SmoothedLoads: make([]SmoothedLoad, 0, len(metrics)),
+		SmoothedLoads: make([]SmoothedLoad, 0, len(instances)),
 	}
 	if view.Status == "" {
 		view.Status = StatusConverging
 	}
-	allFresh := len(instances) > 0
-	allUnderused := allFresh
+	allSampled := len(instances) > 0
+	allUnderused := allSampled
 	overloaded := false
 	for _, instance := range instances {
 		metric, exists := metrics[instance.ID]
-		fresh := exists && freshAt(now, metric.updatedAt, c.config.MetricFreshness)
-		if !fresh {
-			allFresh = false
+		if !exists || metric.smoothedAt.IsZero() ||
+			metric.containerID != instance.ContainerID ||
+			metric.processingSpeed != instance.ProcessingSpeed ||
+			metric.maxLoad != instance.MaxLoad {
+			allSampled = false
 			allUnderused = false
 			continue
 		}
 		view.SmoothedLoads = append(view.SmoothedLoads, SmoothedLoad{
 			InstanceID: instance.ID,
-			LoadRatio:  metric.smoothed,
+			LoadRatio:  roundThree(metric.smoothed),
 		})
 		if metric.smoothed >= 1 ||
 			freshAt(now, metric.lastDropped, c.config.MetricFreshness) {
@@ -82,7 +136,7 @@ func (c *Controller) View(labID string, instances []Instance) View {
 	})
 	if overloaded {
 		view.CapacityNotice = "cluster_overloaded"
-	} else if allFresh && allUnderused {
+	} else if allSampled && allUnderused {
 		view.CapacityNotice = "cluster_underused"
 	}
 	if state.lastError != nil {
@@ -92,18 +146,41 @@ func (c *Controller) View(labID string, instances []Instance) View {
 	return view
 }
 
-// DecorateSnapshot attaches adaptive runtime state to one persisted lab snapshot.
+// DecorateSnapshot attaches runtime load and adaptive state to one lab snapshot.
 func (c *Controller) DecorateSnapshot(snapshot *labstate.Snapshot) {
-	if snapshot == nil || snapshot.Lab.BalancingMode != "adaptive" {
+	if snapshot == nil {
+		return
+	}
+	now := c.now().UTC().Truncate(time.Microsecond)
+	c.mu.RLock()
+	metrics := cloneMetrics(c.metrics[snapshot.Lab.ID])
+	c.mu.RUnlock()
+	for index := range snapshot.Topology.Instances {
+		instance := &snapshot.Topology.Instances[index]
+		metric, exists := metrics[instance.ID]
+		if !exists || metric.containerID != instance.ContainerID ||
+			metric.processingSpeed != instance.ProcessingSpeed ||
+			metric.maxLoad != instance.MaxLoad {
+			continue
+		}
+		load, ratio := estimateMetric(metric, now)
+		instance.CurrentLoad = roundThree(load)
+		instance.LoadRatio = roundThree(ratio)
+		instance.LoadState = loadState(instance.LoadRatio)
+		instance.ObservedAt = now
+	}
+	if snapshot.Lab.BalancingMode != "adaptive" {
 		return
 	}
 	instances := make([]Instance, 0, len(snapshot.Topology.Instances))
 	for _, instance := range snapshot.Topology.Instances {
 		instances = append(instances, Instance{
-			ID:                instance.ID,
-			Status:            instance.Status,
-			EffectiveCapacity: instance.EffectiveCapacity,
-			CurrentWeight:     instance.CurrentWeight,
+			ID:              instance.ID,
+			ContainerID:     instance.ContainerID,
+			Status:          instance.Status,
+			ProcessingSpeed: instance.ProcessingSpeed,
+			MaxLoad:         instance.MaxLoad,
+			CurrentWeight:   instance.CurrentWeight,
 		})
 	}
 	view := c.View(snapshot.Lab.ID, instances)
@@ -131,6 +208,38 @@ func (c *Controller) DecorateSnapshot(snapshot *labstate.Snapshot) {
 		}
 	}
 	snapshot.Balancer = result
+}
+
+func estimateMetric(metric metricState, now time.Time) (float64, float64) {
+	if metric.processingSpeed <= 0 || metric.maxLoad <= 0 || metric.observedAt.IsZero() {
+		return 0, 0
+	}
+	elapsedSeconds := 0.0
+	if now.After(metric.observedAt) {
+		elapsedSeconds = now.Sub(metric.observedAt).Seconds()
+	}
+	load := max(
+		0,
+		metric.currentLoad-float64(metric.processingSpeed)*elapsedSeconds,
+	)
+	return load, load / float64(metric.maxLoad)
+}
+
+func loadState(loadRatio float64) string {
+	switch {
+	case loadRatio <= 0.3:
+		return "idle"
+	case loadRatio <= 0.7:
+		return "normal"
+	case loadRatio < 1:
+		return "high"
+	default:
+		return "overloaded"
+	}
+}
+
+func roundThree(value float64) float64 {
+	return math.Round(value*1000) / 1000
 }
 
 func freshAt(now, value time.Time, freshness time.Duration) bool {

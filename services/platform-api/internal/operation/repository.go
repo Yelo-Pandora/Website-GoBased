@@ -444,23 +444,25 @@ func applyTopologyResult(
 	case ActionAddInstance:
 		if result.Instance == nil || result.Instance.InstanceName == "" ||
 			result.Instance.ContainerID == "" || result.Instance.MemoryLimitMB <= 0 ||
-			result.Instance.PerformancePercent <= 0 || result.Instance.EffectiveCapacity <= 0 ||
+			result.Instance.PerformancePercent <= 0 || result.Instance.ProcessingSpeed <= 0 ||
+			result.Instance.MaxLoad <= 0 ||
 			result.Instance.CurrentWeight <= 0 {
 			return errors.New("add instance result is incomplete")
 		}
 		_, err := tx.ExecContext(ctx, `
 			INSERT INTO lab_instances (
 				lab_id, instance_name, container_id, status, cpu_limit_cores,
-				memory_limit_mb, performance_percent, effective_capacity,
+				memory_limit_mb, performance_percent, processing_speed, max_load,
 				current_weight, created_at, updated_at
-			) VALUES (?, ?, ?, 'running', ?, ?, ?, ?, ?, ?, ?)`,
+			) VALUES (?, ?, ?, 'running', ?, ?, ?, ?, ?, ?, ?, ?)`,
 			record.LabID,
 			result.Instance.InstanceName,
 			result.Instance.ContainerID,
 			result.Instance.CPULimitCores,
 			result.Instance.MemoryLimitMB,
 			result.Instance.PerformancePercent,
-			result.Instance.EffectiveCapacity,
+			result.Instance.ProcessingSpeed,
+			result.Instance.MaxLoad,
 			result.Instance.CurrentWeight,
 			now,
 			now,
@@ -486,18 +488,18 @@ func applyTopologyResult(
 	case ActionSetInstancePerformance:
 		if result.Instance == nil || result.Instance.InstanceName == "" ||
 			result.Instance.ContainerID == "" || result.Instance.PerformancePercent <= 0 ||
-			result.Instance.EffectiveCapacity <= 0 {
+			result.Instance.ProcessingSpeed <= 0 || result.Instance.MaxLoad <= 0 {
 			return errors.New("performance result is incomplete")
 		}
 		updated, err := tx.ExecContext(ctx, `
 			UPDATE lab_instances
 			SET container_id = ?, status = 'running', cpu_limit_cores = ?,
-				performance_percent = ?, effective_capacity = ?, updated_at = ?
+				performance_percent = ?, processing_speed = ?, updated_at = ?
 			WHERE lab_id = ? AND instance_name = ?`,
 			result.Instance.ContainerID,
 			result.Instance.CPULimitCores,
 			result.Instance.PerformancePercent,
-			result.Instance.EffectiveCapacity,
+			result.Instance.ProcessingSpeed,
 			now,
 			record.LabID,
 			result.Instance.InstanceName,
@@ -600,7 +602,8 @@ func (r *Repository) ValidateAdaptive(
 		return false, nil
 	}
 	rows, err := tx.QueryContext(ctx, `
-		SELECT instance_name, status, effective_capacity, current_weight
+		SELECT instance_name, container_id, status, processing_speed, max_load,
+			current_weight
 		FROM lab_instances
 		WHERE lab_id = ?
 		ORDER BY instance_name`, record.LabID)
@@ -612,8 +615,10 @@ func (r *Repository) ValidateAdaptive(
 		var instance balancer.Instance
 		if err := rows.Scan(
 			&instance.ID,
+			&instance.ContainerID,
 			&instance.Status,
-			&instance.EffectiveCapacity,
+			&instance.ProcessingSpeed,
+			&instance.MaxLoad,
 			&instance.CurrentWeight,
 		); err != nil {
 			rows.Close()
@@ -688,22 +693,24 @@ func persistProvisionResult(
 	for _, instance := range result.Instances {
 		if instance.InstanceName == "" || instance.ContainerID == "" ||
 			instance.ContainerName == "" || instance.MemoryLimitMB <= 0 ||
-			instance.PerformancePercent <= 0 || instance.EffectiveCapacity < 0 ||
+			instance.PerformancePercent <= 0 || instance.ProcessingSpeed <= 0 ||
+			instance.MaxLoad <= 0 ||
 			instance.CurrentWeight <= 0 {
 			return errors.New("orchestrator instance result is incomplete")
 		}
 		_, err := tx.ExecContext(ctx, `
 			INSERT INTO lab_instances (
 				lab_id, instance_name, container_id, status, cpu_limit_cores,
-				memory_limit_mb, performance_percent, effective_capacity,
+				memory_limit_mb, performance_percent, processing_speed, max_load,
 				current_weight, created_at, updated_at
-			) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 			ON DUPLICATE KEY UPDATE
 				container_id = VALUES(container_id), status = VALUES(status),
 				cpu_limit_cores = VALUES(cpu_limit_cores),
 				memory_limit_mb = VALUES(memory_limit_mb),
 				performance_percent = VALUES(performance_percent),
-				effective_capacity = VALUES(effective_capacity),
+				processing_speed = VALUES(processing_speed),
+				max_load = VALUES(max_load),
 				current_weight = VALUES(current_weight), updated_at = VALUES(updated_at)`,
 			record.LabID,
 			instance.InstanceName,
@@ -712,7 +719,8 @@ func persistProvisionResult(
 			instance.CPULimitCores,
 			instance.MemoryLimitMB,
 			instance.PerformancePercent,
-			instance.EffectiveCapacity,
+			instance.ProcessingSpeed,
+			instance.MaxLoad,
 			instance.CurrentWeight,
 			now,
 			now,

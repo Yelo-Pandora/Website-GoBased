@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math"
 	"strings"
 
 	"website-gobased/internal/protocol"
@@ -41,7 +42,7 @@ type userLimiter interface {
 }
 
 type resultObserver interface {
-	Observe(labID string, result protocol.TrafficBatchResult)
+	Observe(labID string, instance lab.Instance, result protocol.TrafficBatchResult)
 }
 
 // Service enforces platform ownership and validates an instance result.
@@ -97,10 +98,20 @@ func (s *Service) Submit(
 		return protocol.TrafficBatchResult{}, ErrUnavailable
 	}
 	if s.observer != nil {
-		s.observer.Observe(labID, result)
+		instance, _ := findInstance(snapshot.Topology.Instances, result.TargetInstanceID)
+		s.observer.Observe(labID, instance, result)
 	}
 	result.Path = []string{"user-pool", "lab-gateway", result.TargetInstanceID}
 	return result, nil
+}
+
+func findInstance(instances []lab.Instance, instanceID string) (lab.Instance, bool) {
+	for _, instance := range instances {
+		if instance.ID == instanceID {
+			return instance, true
+		}
+	}
+	return lab.Instance{}, false
 }
 
 func validBatch(request protocol.TrafficBatchRequest) bool {
@@ -144,15 +155,26 @@ func validResult(
 ) bool {
 	if result.BatchID != request.BatchID || result.LabID != snapshot.Lab.ID ||
 		result.OccurredAt.IsZero() || result.ReceivedUnits != request.RequestUnits ||
-		result.ProcessedUnits < 0 || result.DroppedUnits < 0 ||
-		result.ProcessedUnits+result.DroppedUnits != result.ReceivedUnits ||
-		result.InstanceState.EffectiveCapacity <= 0 || result.InstanceState.RemainingCapacity < 0 ||
-		result.InstanceState.CapacityWindowStartedAt.IsZero() ||
-		!result.InstanceState.CapacityWindowEndsAt.After(result.InstanceState.CapacityWindowStartedAt) {
+		result.AcceptedUnits < 0 || result.DroppedUnits < 0 ||
+		result.AcceptedUnits+result.DroppedUnits != result.ReceivedUnits ||
+		result.InstanceState.ProcessingSpeed <= 0 || result.InstanceState.MaxLoad <= 0 ||
+		result.InstanceState.CurrentLoad < 0 ||
+		result.InstanceState.CurrentLoad > float64(result.InstanceState.MaxLoad) ||
+		result.InstanceState.ObservedAt.IsZero() ||
+		!result.InstanceState.ObservedAt.Equal(result.OccurredAt) {
 		return false
 	}
-	validStatus := result.Status == "processed" ||
-		result.Status == "partially_processed" || result.Status == "dropped"
+	expectedRatio := math.Round(
+		result.InstanceState.CurrentLoad/float64(result.InstanceState.MaxLoad)*1000,
+	) / 1000
+	if math.Abs(result.InstanceState.LoadRatio-expectedRatio) > 0.001 {
+		return false
+	}
+	validStatus := result.Status == "accepted" && result.AcceptedUnits > 0 &&
+		result.DroppedUnits == 0 ||
+		result.Status == "partially_accepted" && result.AcceptedUnits > 0 &&
+			result.DroppedUnits > 0 ||
+		result.Status == "dropped" && result.AcceptedUnits == 0 && result.DroppedUnits > 0
 	validLoadState := result.InstanceState.LoadState == "idle" ||
 		result.InstanceState.LoadState == "normal" || result.InstanceState.LoadState == "high" ||
 		result.InstanceState.LoadState == "overloaded" || result.InstanceState.LoadState == "unavailable"
@@ -160,7 +182,9 @@ func validResult(
 		return false
 	}
 	for _, instance := range snapshot.Topology.Instances {
-		if instance.ID == result.TargetInstanceID {
+		if instance.ID == result.TargetInstanceID &&
+			instance.ProcessingSpeed == result.InstanceState.ProcessingSpeed &&
+			instance.MaxLoad == result.InstanceState.MaxLoad {
 			return true
 		}
 	}

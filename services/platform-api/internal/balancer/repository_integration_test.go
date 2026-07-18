@@ -71,21 +71,28 @@ func TestRepositoryEnqueueAdjustmentIntegration(t *testing.T) {
 		t.Fatalf("insert test lab: %v", err)
 	}
 	instances := []Instance{
-		{ID: "app-1", Status: "running", EffectiveCapacity: 100, CurrentWeight: 100},
-		{ID: "app-2", Status: "running", EffectiveCapacity: 30, CurrentWeight: 100},
+		{
+			ID: "app-1", ContainerID: fmt.Sprintf("container-%d-0", stamp),
+			Status: "running", ProcessingSpeed: 20, MaxLoad: 100, CurrentWeight: 100,
+		},
+		{
+			ID: "app-2", ContainerID: fmt.Sprintf("container-%d-1", stamp),
+			Status: "running", ProcessingSpeed: 6, MaxLoad: 100, CurrentWeight: 100,
+		},
 	}
-	for index, instance := range instances {
+	for _, instance := range instances {
 		if _, err := database.ExecContext(ctx, `
 			INSERT INTO lab_instances (
 				lab_id, instance_name, container_id, status, cpu_limit_cores,
-				memory_limit_mb, performance_percent, effective_capacity,
+				memory_limit_mb, performance_percent, processing_speed, max_load,
 				current_weight, created_at, updated_at
-			) VALUES (?, ?, ?, 'running', 0.1, 128, ?, ?, ?, ?, ?)`,
+			) VALUES (?, ?, ?, 'running', 0.1, 128, ?, ?, ?, ?, ?, ?)`,
 			labID,
 			instance.ID,
-			fmt.Sprintf("container-%d-%d", stamp, index),
-			instance.EffectiveCapacity,
-			instance.EffectiveCapacity,
+			instance.ContainerID,
+			instance.ProcessingSpeed*5,
+			instance.ProcessingSpeed,
+			instance.MaxLoad,
 			instance.CurrentWeight,
 			now,
 			now,

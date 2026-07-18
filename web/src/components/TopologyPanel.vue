@@ -44,7 +44,8 @@ function databaseState(lab) {
           </div>
           <dl>
             <div><dt>CPU</dt><dd>{{ instance.cpuLimitCores }}</dd></div>
-            <div><dt>容量</dt><dd>{{ instance.effectiveCapacity }}</dd></div>
+            <div><dt>处理速度</dt><dd>{{ instance.processingSpeed }}/秒</dd></div>
+            <div><dt>最大负载</dt><dd>{{ instance.maxLoad }}</dd></div>
             <div><dt>权重</dt><dd>{{ instance.currentWeight }}</dd></div>
           </dl>
         </article>

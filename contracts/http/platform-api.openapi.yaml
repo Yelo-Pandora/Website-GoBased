@@ -838,11 +838,13 @@ components:
         - cpuLimitCores
         - memoryLimitMb
         - performancePercent
-        - effectiveCapacity
+        - processingSpeed
+        - maxLoad
         - currentWeight
-        - remainingCapacity
+        - currentLoad
         - loadRatio
         - loadState
+        - observedAt
       properties:
         instanceId:
           type: string
@@ -856,12 +858,16 @@ components:
           type: integer
         performancePercent:
           type: integer
-        effectiveCapacity:
+        processingSpeed:
           type: integer
+          minimum: 1
+        maxLoad:
+          type: integer
+          minimum: 1
         currentWeight:
           type: integer
-        remainingCapacity:
-          type: integer
+        currentLoad:
+          type: number
           minimum: 0
         loadRatio:
           type: number
@@ -869,6 +875,9 @@ components:
         loadState:
           type: string
           enum: [idle, normal, high, overloaded, unavailable]
+        observedAt:
+          type: string
+          format: date-time
     BalancerSnapshot:
       type: object
       required: [status, targetWeights, smoothedLoads]
@@ -1053,7 +1062,7 @@ components:
         - path
         - targetInstanceId
         - receivedUnits
-        - processedUnits
+        - acceptedUnits
         - droppedUnits
         - instanceState
       properties:
@@ -1063,7 +1072,7 @@ components:
           type: string
         status:
           type: string
-          enum: [processed, partially_processed, dropped]
+          enum: [accepted, partially_accepted, dropped]
         occurredAt:
           type: string
           format: date-time
@@ -1077,7 +1086,7 @@ components:
         receivedUnits:
           type: integer
           minimum: 0
-        processedUnits:
+        acceptedUnits:
           type: integer
           minimum: 0
         droppedUnits:
@@ -1088,18 +1097,21 @@ components:
     TrafficInstanceState:
       type: object
       required:
-        - effectiveCapacity
-        - remainingCapacity
+        - processingSpeed
+        - maxLoad
+        - currentLoad
         - loadRatio
         - loadState
-        - capacityWindowStartedAt
-        - capacityWindowEndsAt
+        - observedAt
       properties:
-        effectiveCapacity:
+        processingSpeed:
           type: integer
-          minimum: 0
-        remainingCapacity:
+          minimum: 1
+        maxLoad:
           type: integer
+          minimum: 1
+        currentLoad:
+          type: number
           minimum: 0
         loadRatio:
           type: number
@@ -1107,10 +1119,7 @@ components:
         loadState:
           type: string
           enum: [idle, normal, high, overloaded, unavailable]
-        capacityWindowStartedAt:
-          type: string
-          format: date-time
-        capacityWindowEndsAt:
+        observedAt:
           type: string
           format: date-time
     ErrorResponse:

@@ -15,14 +15,65 @@ const props = defineProps({
 const emit = defineEmits(['action']);
 const performance = reactive({});
 const weights = reactive({});
+const observedPerformance = {};
+const observedWeights = {};
 const balancerView = computed(() => buildBalancerView(props.instances, props.balancer));
+let previousInstanceIdentity = null;
+let previousMode = null;
 
-watch(() => props.instances, (instances) => {
+function clearValues(values) {
+  for (const key of Object.keys(values)) delete values[key];
+}
+
+function resetEditors(instances) {
+  for (const values of [performance, weights, observedPerformance, observedWeights]) {
+    clearValues(values);
+  }
   for (const instance of instances) {
     performance[instance.instanceId] = instance.performancePercent;
     weights[instance.instanceId] = instance.currentWeight;
+    observedPerformance[instance.instanceId] = instance.performancePercent;
+    observedWeights[instance.instanceId] = instance.currentWeight;
   }
-}, {immediate: true, deep: true});
+}
+
+function reconcileValue(draft, observed, instanceId, actualValue) {
+  if (!Object.hasOwn(observed, instanceId) || draft[instanceId] === observed[instanceId]) {
+    draft[instanceId] = actualValue;
+  }
+  observed[instanceId] = actualValue;
+}
+
+watch([() => props.mode, () => props.instances], ([mode, instances]) => {
+  const instanceIdentity = instances
+    .map((instance) => instance.instanceId)
+    .sort()
+    .join('|');
+  const structureChanged = previousMode === null ||
+    mode !== previousMode || instanceIdentity !== previousInstanceIdentity;
+
+  if (structureChanged) {
+    resetEditors(instances);
+  } else {
+    for (const instance of instances) {
+      reconcileValue(
+        performance,
+        observedPerformance,
+        instance.instanceId,
+        instance.performancePercent,
+      );
+      reconcileValue(
+        weights,
+        observedWeights,
+        instance.instanceId,
+        instance.currentWeight,
+      );
+    }
+  }
+
+  previousMode = mode;
+  previousInstanceIdentity = instanceIdentity;
+}, {immediate: true});
 
 function submit(actionType, targetInstanceId = null, parameters = {}) {
   emit('action', {actionType, targetInstanceId, parameters});
@@ -62,7 +113,8 @@ function setMode(mode) {
         <div>
           <strong>{{ instance.instanceName }}</strong>
           <small>
-            容量 {{ instance.effectiveCapacity }} · CPU {{ instance.cpuLimitCores }}
+            处理速度 {{ instance.processingSpeed }}/秒 · 最大负载 {{ instance.maxLoad }}
+            · CPU {{ instance.cpuLimitCores }}
             <template v-if="mode === 'adaptive'">
               · 目标权重 {{ balancerView.targetFor(instance.instanceId) }}
             </template>
@@ -136,7 +188,7 @@ function setMode(mode) {
         <Scale :size="18" />
         <span><strong>{{ balancerView.statusText }}</strong><small>后端每 2 秒采样一次</small></span>
       </div>
-      <code>容量 {{ balancerView.capacityRatio }} → 权重 {{ balancerView.weightRatio }}</code>
+      <code>处理速度 {{ balancerView.processingSpeedRatio }} → 权重 {{ balancerView.weightRatio }}</code>
       <p v-if="balancerView.notice">{{ balancerView.notice }}</p>
       <p v-if="balancerView.error" class="adaptive-balancer__error">
         {{ balancerView.error.code }}：{{ balancerView.error.message }}

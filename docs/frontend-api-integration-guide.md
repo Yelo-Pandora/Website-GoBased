@@ -549,8 +549,13 @@ Set-Cookie: session=<opaque-token>; HttpOnly; SameSite=Strict; Path=/
           "cpuLimitCores": 0.1,
           "memoryLimitMb": 128,
           "performancePercent": 100,
-          "effectiveCapacity": 100,
-          "currentWeight": 100
+          "processingSpeed": 20,
+          "maxLoad": 100,
+          "currentWeight": 100,
+          "currentLoad": 0,
+          "loadRatio": 0,
+          "loadState": "idle",
+          "observedAt": "2026-07-13T06:32:10Z"
         }
       ],
       "redis": null,
@@ -569,16 +574,17 @@ Set-Cookie: session=<opaque-token>; HttpOnly; SameSite=Strict; Path=/
 ```
 
 明确来源字段包括实验状态、模板 ID、平衡模式、Redis 状态、实例资源、
-性能比例、有效容量、权重和操作状态。
+性能比例、处理速度、最大负载、权重和操作状态。
 
 以下截止字段由阶段六根据持久化活动时间计算：
 
 - `idleExpiresAt`
 - `maximumExpiresAt`
 
-以下运行时计算字段已由阶段七容量批次接入：
+以下运行时计算字段已由阶段七真实批次接入：
 
-- `capacity.totalEffectiveCapacity`
+- `topology.instances[].currentLoad`
+- `topology.instances[].loadRatio`
 - `trafficPolicy`
 - `cache`
 
@@ -785,26 +791,30 @@ SDS 明确要求以下字段：
   "data": {
     "result": {
       "batchId": "batch-8f3c",
-      "status": "partially_processed",
+      "labId": "lab_01J2M8Y5A4D7KQ2V9N6P3R1T0X",
+      "status": "partially_accepted",
       "occurredAt": "2026-07-16T10:00:00Z",
       "path": ["user-pool", "lab-gateway", "app-1"],
       "targetInstanceId": "app-1",
       "receivedUnits": 10,
-      "processedUnits": 6,
+      "acceptedUnits": 6,
       "droppedUnits": 4,
       "instanceState": {
-        "effectiveCapacity": 100,
-        "remainingCapacity": 0,
-        "loadRatio": 1.04,
-        "loadState": "overloaded"
+        "processingSpeed": 20,
+        "maxLoad": 100,
+        "currentLoad": 100,
+        "loadRatio": 1,
+        "loadState": "overloaded",
+        "observedAt": "2026-07-16T10:00:00Z"
       }
     }
   }
 }
 ```
 
-前端动画规则：成功球进入 `targetInstanceId`；部分成功时在网关生成两个分别标注
-`processedUnits` 和 `droppedUnits` 的球；全部丢弃时原球偏离并消失；错误响应生成错误球。
+前端动画规则：接纳球进入 `targetInstanceId`。
+部分接纳时在网关生成两个分别标注 `acceptedUnits` 和 `droppedUnits` 的球。
+全部丢弃时原球偏离并消失，错误响应生成错误球。
 
 建议错误：
 
@@ -920,7 +930,8 @@ SDS 定义的操作状态为：
   "result": {
     "performancePercent": 30,
     "cpuLimitCores": 0.03,
-    "effectiveCapacity": 30
+    "processingSpeed": 6,
+    "maxLoad": 100
   },
   "error": null
 }

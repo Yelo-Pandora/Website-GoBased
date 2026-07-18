@@ -35,10 +35,10 @@ func Run(ctx context.Context, cfg Config, logger *slog.Logger) error {
 		product.NewRepository(database),
 		order.NewRepository(database),
 		order.Config{
-			LabID:             cfg.LabID,
-			InstanceID:        cfg.InstanceID,
-			EffectiveCapacity: cfg.EffectiveCapacity,
-			CapacityWindow:    cfg.CapacityWindow,
+			LabID:           cfg.LabID,
+			InstanceID:      cfg.InstanceID,
+			ProcessingSpeed: cfg.ProcessingSpeed,
+			MaxLoad:         cfg.MaxLoad,
 		},
 	)
 	if err != nil {

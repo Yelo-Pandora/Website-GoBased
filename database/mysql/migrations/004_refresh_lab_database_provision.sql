@@ -1,8 +1,6 @@
 USE platform;
 
 DROP PROCEDURE IF EXISTS provision_lab_database;
-DROP PROCEDURE IF EXISTS reset_lab_database;
-DROP PROCEDURE IF EXISTS destroy_lab_database;
 
 DELIMITER $$
 
@@ -134,75 +132,6 @@ BEGIN
   PREPARE statement_handle FROM @sql_text;
   EXECUTE statement_handle;
   DEALLOCATE PREPARE statement_handle;
-
-END$$
-
-CREATE PROCEDURE reset_lab_database(
-  IN p_database_name VARCHAR(64)
-)
-SQL SECURITY DEFINER
-BEGIN
-  IF p_database_name NOT REGEXP '^lab_[a-z0-9]{4,32}$' THEN
-    SIGNAL SQLSTATE '45000'
-      SET MESSAGE_TEXT = 'invalid lab database name';
-  END IF;
-
-  SET @sql_text = CONCAT('DELETE FROM `', p_database_name, '`.order_stats');
-  PREPARE statement_handle FROM @sql_text;
-  EXECUTE statement_handle;
-  DEALLOCATE PREPARE statement_handle;
-
-  SET @sql_text = CONCAT('DELETE FROM `', p_database_name, '`.products');
-  PREPARE statement_handle FROM @sql_text;
-  EXECUTE statement_handle;
-  DEALLOCATE PREPARE statement_handle;
-
-  SET @sql_text = CONCAT(
-    'INSERT INTO `',
-    p_database_name,
-    '`.products ',
-    '(id, name, category, price, currency, stock_label, description, version) ',
-    'VALUES ',
-    '(1, ''Architecture Practice Laptop'', ''electronics'', 6999.00, ',
-    '''CNY'', ''in_stock'', ''Product used by the application cluster lab.'', 1),',
-    '(2, ''Distributed Systems Handbook'', ''books'', 129.00, ',
-    '''CNY'', ''in_stock'', ''Product used by cache and database labs.'', 1)'
-  );
-  PREPARE statement_handle FROM @sql_text;
-  EXECUTE statement_handle;
-  DEALLOCATE PREPARE statement_handle;
-
-END$$
-
-CREATE PROCEDURE destroy_lab_database(
-  IN p_database_name VARCHAR(64),
-  IN p_database_user VARCHAR(64)
-)
-SQL SECURITY DEFINER
-BEGIN
-  IF p_database_name NOT REGEXP '^lab_[a-z0-9]{4,32}$' THEN
-    SIGNAL SQLSTATE '45000'
-      SET MESSAGE_TEXT = 'invalid lab database name';
-  END IF;
-  IF p_database_user NOT REGEXP '^lab_[a-z0-9]{4,23}_user$' THEN
-    SIGNAL SQLSTATE '45000'
-      SET MESSAGE_TEXT = 'invalid lab database user';
-  END IF;
-
-  SET @sql_text = CONCAT('DROP DATABASE IF EXISTS `', p_database_name, '`');
-  PREPARE statement_handle FROM @sql_text;
-  EXECUTE statement_handle;
-  DEALLOCATE PREPARE statement_handle;
-
-  SET @sql_text = CONCAT(
-    'DROP USER IF EXISTS ''',
-    p_database_user,
-    '''@''%'''
-  );
-  PREPARE statement_handle FROM @sql_text;
-  EXECUTE statement_handle;
-  DEALLOCATE PREPARE statement_handle;
-
 END$$
 
 DELIMITER ;

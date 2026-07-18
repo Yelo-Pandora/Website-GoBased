@@ -16,7 +16,7 @@ export function buildBalancerView(instances, balancer) {
   return {
     status: balancer?.status || 'converging',
     statusText: STATUS_TEXT[balancer?.status] || STATUS_TEXT.converging,
-    capacityRatio: instances.map((instance) => instance.effectiveCapacity).join(':'),
+    processingSpeedRatio: instances.map((instance) => instance.processingSpeed).join(':'),
     weightRatio: instances.map((instance) => targets.get(instance.instanceId) ?? '—').join(':'),
     targetFor(instanceId) {
       return targets.get(instanceId) ?? '—';

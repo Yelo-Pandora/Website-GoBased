@@ -1,10 +1,11 @@
 <script setup>
 import {CircleStop, Play, Send, ShoppingCart, Waypoints} from '@lucide/vue';
-import {computed, onBeforeUnmount, ref, watch} from 'vue';
+import {computed, onBeforeUnmount, onMounted, ref, watch} from 'vue';
 
 import {
   arriveAtGateway,
   createBall,
+  estimateInstanceState,
   failBall,
   receiveResult,
 } from '../features/lab/traffic-state.js';
@@ -12,38 +13,43 @@ import {
 const props = defineProps({
   instances: {type: Array, default: () => []},
   policy: Object,
+  mode: {type: String, default: 'fixed'},
   running: Boolean,
   submitBatch: {type: Function, required: true},
 });
 
 const generating = ref(false);
-const requestPending = ref(false);
-const requestUnits = ref(60);
-const generationInterval = ref(1000);
+const manualRequestPending = ref(false);
+const requestUnits = ref(props.policy?.requestUnits?.default ?? 10);
+const generationInterval = ref(props.policy?.generationIntervalMs?.default ?? 250);
 const balls = ref([]);
 const instanceStates = ref({});
-const processedTotal = ref(0);
+const acceptedTotal = ref(0);
 const droppedTotal = ref(0);
 const lastError = ref('');
+const displayNow = ref(Date.now());
 const timers = new Set();
+let loadTimer = null;
+let generationTimer = null;
+let automaticRequestPending = false;
 
 const unitsPolicy = computed(() => props.policy?.requestUnits || {
-  minimum: 1, maximum: 100, step: 1, default: 60,
+  minimum: 1, maximum: 100, step: 1, default: 10,
 });
 const intervalPolicy = computed(() => props.policy?.generationIntervalMs || {
-  minimum: 250, maximum: 5000, step: 250, default: 1000,
+  minimum: 250, maximum: 5000, step: 250, default: 250,
+});
+const instanceIdentity = computed(() =>
+  props.instances.map((instance) => instance.instanceId).sort().join('|'),
+);
+
+watch([instanceIdentity, () => props.mode], () => {
+  requestUnits.value = unitsPolicy.value.default;
+  generationInterval.value = intervalPolicy.value.default;
 });
 
-watch(unitsPolicy, (policy) => {
-  requestUnits.value = policy.default;
-}, {immediate: true});
-
-watch(intervalPolicy, (policy) => {
-  generationInterval.value = policy.default;
-}, {immediate: true});
-
 watch(() => props.running, (running) => {
-  if (!running) generating.value = false;
+  if (!running) stop();
 });
 
 function schedule(callback, delay) {
@@ -83,7 +89,8 @@ function updateInstanceState(result) {
 }
 
 function displayState(instance) {
-  return instanceStates.value[instance.instanceId] || instance;
+  const state = instanceStates.value[instance.instanceId] || instance;
+  return estimateInstanceState(state, displayNow.value);
 }
 
 function targetStyle(ball) {
@@ -92,9 +99,7 @@ function targetStyle(ball) {
   return {'--target-y': `${((Math.max(0, index) + 0.5) / count) * 100}%`};
 }
 
-async function sendOnce() {
-  if (!props.running || requestPending.value) return;
-  requestPending.value = true;
+async function submitOneBatch() {
   lastError.value = '';
   const batchId = `batch-${crypto.randomUUID?.() || Date.now()}`.slice(0, 64);
   balls.value.push(createBall(batchId, Number(requestUnits.value)));
@@ -106,7 +111,7 @@ async function sendOnce() {
       requestUnits: Number(requestUnits.value),
     });
     updateInstanceState(result);
-    processedTotal.value += result.processedUnits;
+    acceptedTotal.value += result.acceptedUnits;
     droppedTotal.value += result.droppedUnits;
     const ball = balls.value.find((candidate) => candidate.id === batchId);
     if (ball) replaceBall(batchId, receiveResult(ball, result));
@@ -114,25 +119,59 @@ async function sendOnce() {
     lastError.value = error?.code || 'NETWORK_ERROR';
     const ball = balls.value.find((candidate) => candidate.id === batchId);
     if (ball) replaceBall(batchId, failBall(ball));
-  } finally {
-    requestPending.value = false;
-    if (generating.value && props.running) {
-      schedule(sendOnce, Number(generationInterval.value));
-    }
   }
+}
+
+async function sendAutomaticBatch() {
+  if (!props.running || !generating.value || automaticRequestPending) return;
+  automaticRequestPending = true;
+  try {
+    await submitOneBatch();
+  } finally {
+    automaticRequestPending = false;
+  }
+}
+
+async function sendManualBatch() {
+  if (!props.running || manualRequestPending.value) return;
+  manualRequestPending.value = true;
+  try {
+    await submitOneBatch();
+  } finally {
+    manualRequestPending.value = false;
+  }
+}
+
+function clearGenerationTimer() {
+  if (generationTimer === null) return;
+  window.clearInterval(generationTimer);
+  generationTimer = null;
 }
 
 function start() {
   if (!props.running || generating.value) return;
   generating.value = true;
-  sendOnce();
+  sendAutomaticBatch();
+  generationTimer = window.setInterval(
+    sendAutomaticBatch,
+    Number(generationInterval.value),
+  );
 }
 
 function stop() {
   generating.value = false;
+  clearGenerationTimer();
 }
 
+onMounted(() => {
+  loadTimer = window.setInterval(() => {
+    displayNow.value = Date.now();
+  }, 100);
+});
+
 onBeforeUnmount(() => {
+  clearGenerationTimer();
+  if (loadTimer !== null) window.clearInterval(loadTimer);
   for (const timer of timers) window.clearTimeout(timer);
   timers.clear();
 });
@@ -171,7 +210,7 @@ onBeforeUnmount(() => {
       <button v-else class="button" type="button" @click="stop">
         <CircleStop :size="17" />停止
       </button>
-      <button class="button" type="button" :disabled="!running || requestPending" @click="sendOnce">
+      <button class="button" type="button" :disabled="!running || manualRequestPending" @click="sendManualBatch">
         <Send :size="17" />发送一批
       </button>
     </div>
@@ -208,7 +247,7 @@ onBeforeUnmount(() => {
     </div>
 
     <footer class="traffic-summary">
-      <span>已处理 <strong>{{ processedTotal }}</strong></span>
+      <span>已接纳 <strong>{{ acceptedTotal }}</strong></span>
       <span>已丢弃 <strong>{{ droppedTotal }}</strong></span>
       <span v-if="lastError" class="traffic-error">{{ lastError }}</span>
       <small>数字为教学等效订单量；每个小球仅发起一次真实 HTTP 请求。</small>

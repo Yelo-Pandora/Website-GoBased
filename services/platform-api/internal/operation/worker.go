@@ -347,7 +347,7 @@ func (w *Worker) setInstancePerformance(ctx context.Context, record Record, payl
 		"previousPerformancePercent": payload.PreviousPerformancePercent,
 	})
 	if err != nil {
-		return w.completeTopologyFailure(ctx, record, "ORCHESTRATOR_UNAVAILABLE", "application capacity could not be updated")
+		return w.completeTopologyFailure(ctx, record, "ORCHESTRATOR_UNAVAILABLE", "application performance could not be updated")
 	}
 	if response.Status != "succeeded" {
 		code, message := commandError(response.Error)
@@ -355,7 +355,7 @@ func (w *Worker) setInstancePerformance(ctx context.Context, record Record, payl
 	}
 	instance, err := decodeProvisionInstance(response.Result)
 	if err != nil {
-		return w.completeTopologyFailure(ctx, record, "ORCHESTRATOR_RESPONSE_INCOMPLETE", "application capacity result is invalid")
+		return w.completeTopologyFailure(ctx, record, "ORCHESTRATOR_RESPONSE_INCOMPLETE", "application performance result is invalid")
 	}
 	if err := w.applyTopologyServers(ctx, record, payload.Servers); err != nil {
 		_, _ = w.executeTopologyCommand(context.WithoutCancel(ctx), record, "UPDATE_APP_CAPACITY", map[string]any{
@@ -521,7 +521,8 @@ func decodeProvisionInstance(value any) (ProvisionInstance, error) {
 	if instance.InstanceName == "" || instance.ContainerID == "" ||
 		instance.ContainerName == "" || instance.CPULimitCores <= 0 ||
 		instance.MemoryLimitMB <= 0 || instance.PerformancePercent <= 0 ||
-		instance.EffectiveCapacity <= 0 || instance.CurrentWeight <= 0 {
+		instance.ProcessingSpeed <= 0 || instance.MaxLoad <= 0 ||
+		instance.CurrentWeight <= 0 {
 		return ProvisionInstance{}, errors.New("application instance result is incomplete")
 	}
 	return instance, nil
@@ -614,7 +615,8 @@ func decodeProvisionResult(value any) (ProvisionResult, error) {
 		if instance.InstanceName == "" || instance.ContainerID == "" ||
 			instance.ContainerName == "" || instance.CPULimitCores <= 0 ||
 			instance.MemoryLimitMB <= 0 || instance.PerformancePercent <= 0 ||
-			instance.EffectiveCapacity < 0 || instance.CurrentWeight <= 0 {
+			instance.ProcessingSpeed <= 0 || instance.MaxLoad <= 0 ||
+			instance.CurrentWeight <= 0 {
 			return ProvisionResult{}, errors.New("provision instance result is incomplete")
 		}
 	}

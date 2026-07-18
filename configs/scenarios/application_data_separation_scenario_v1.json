@@ -13,9 +13,9 @@
     "memoryLimitMb": 128,
     "pidsLimit": 64
   },
-  "capacity": {
-    "baseCapacity": 100,
-    "capacityWindowMs": 1000,
+  "loadModel": {
+    "baseProcessingSpeed": 20,
+    "maxLoad": 100,
     "initialPerformancePercent": 100,
     "minPerformancePercent": 20,
     "maxPerformancePercent": 100
@@ -25,13 +25,10 @@
     "mode": "fixed"
   },
   "orderSimulation": {
-    "defaultBatchSize": 60,
-    "defaultGenerationIntervalMs": 1000,
-    "processingDelayMs": 0,
+    "defaultBatchSize": 10,
+    "defaultGenerationIntervalMs": 250,
     "overloadPolicy": "drop_excess",
-    "queueMode": "disabled",
-    "concurrencyControl": "mutex",
-    "preserveArrivalOrder": false
+    "concurrencyControl": "mutex"
   },
   "productSeeds": [
     {

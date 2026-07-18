@@ -66,7 +66,8 @@ type ProvisionInstance struct {
 	CPULimitCores      float64 `json:"cpuLimitCores"`
 	MemoryLimitMB      int     `json:"memoryLimitMb"`
 	PerformancePercent int     `json:"performancePercent"`
-	EffectiveCapacity  int     `json:"effectiveCapacity"`
+	ProcessingSpeed    int     `json:"processingSpeed"`
+	MaxLoad            int     `json:"maxLoad"`
 	CurrentWeight      int     `json:"currentWeight"`
 }
 

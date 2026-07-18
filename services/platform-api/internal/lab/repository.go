@@ -451,7 +451,8 @@ func (r *Repository) FindSnapshot(
 	}
 	rows, err := tx.QueryContext(ctx, `
 		SELECT instance_name, container_id, status, cpu_limit_cores,
-			memory_limit_mb, performance_percent, effective_capacity, current_weight
+			memory_limit_mb, performance_percent, processing_speed, max_load,
+			current_weight
 		FROM lab_instances
 		WHERE lab_id = ?
 		ORDER BY instance_name`, labID)
@@ -468,7 +469,8 @@ func (r *Repository) FindSnapshot(
 			&instance.CPULimitCores,
 			&instance.MemoryLimitMB,
 			&instance.PerformancePercent,
-			&instance.EffectiveCapacity,
+			&instance.ProcessingSpeed,
+			&instance.MaxLoad,
 			&instance.CurrentWeight,
 		); err != nil {
 			rows.Close()

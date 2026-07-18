@@ -1,4 +1,4 @@
-// Package order applies teaching-equivalent capacity without saturating real CPU.
+// Package order applies teaching-equivalent aggregate load without saturating real CPU.
 package order
 
 import (
@@ -24,40 +24,40 @@ type aggregateWriter interface {
 	Add(ctx context.Context, value Aggregate) error
 }
 
-// Config fixes one instance identity and capacity model.
+// Config fixes one instance identity and aggregate load model.
 type Config struct {
-	LabID             string
-	InstanceID        string
-	EffectiveCapacity int
-	CapacityWindow    time.Duration
+	LabID           string
+	InstanceID      string
+	ProcessingSpeed int
+	MaxLoad         int
 }
 
-// Processor serializes capacity allocation within one application instance.
+// Processor serializes aggregate load updates within one application instance.
 type Processor struct {
 	products productReader
 	stats    aggregateWriter
 	config   Config
 	now      func() time.Time
 	mu       sync.Mutex
-	window   capacityWindow
+
+	currentLoad   float64
+	lastUpdatedAt time.Time
 }
 
-type capacityWindow struct {
-	startedAt time.Time
-	received  int
-	processed int
-}
-
-// NewProcessor returns a capacity-window processor.
-func NewProcessor(products productReader, stats aggregateWriter, config Config) (*Processor, error) {
+// NewProcessor returns an aggregate-load processor.
+func NewProcessor(
+	products productReader,
+	stats aggregateWriter,
+	config Config,
+) (*Processor, error) {
 	if products == nil || stats == nil || config.LabID == "" || config.InstanceID == "" ||
-		config.EffectiveCapacity <= 0 || config.CapacityWindow <= 0 {
+		config.ProcessingSpeed <= 0 || config.MaxLoad <= 0 {
 		return nil, errors.New("order processor config is incomplete")
 	}
 	return &Processor{products: products, stats: stats, config: config, now: time.Now}, nil
 }
 
-// Process validates a product, consumes the current window, and stores aggregate counts.
+// Process validates a product, settles load, and stores aggregate counts.
 func (p *Processor) Process(
 	ctx context.Context,
 	request protocol.TrafficBatchRequest,
@@ -70,41 +70,47 @@ func (p *Processor) Process(
 	}
 
 	now := p.now().UTC()
-	result, bucket := p.allocate(request, now)
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	result, nextLoad := p.allocate(request, now)
 	if err := p.stats.Add(ctx, Aggregate{
-		ProductID:      request.ProductID,
-		InstanceID:     p.config.InstanceID,
-		TimeBucket:     bucket,
-		ReceivedUnits:  result.ReceivedUnits,
-		ProcessedUnits: result.ProcessedUnits,
-		DroppedUnits:   result.DroppedUnits,
+		ProductID:     request.ProductID,
+		InstanceID:    p.config.InstanceID,
+		TimeBucket:    now.Truncate(time.Second),
+		ReceivedUnits: result.ReceivedUnits,
+		AcceptedUnits: result.AcceptedUnits,
+		DroppedUnits:  result.DroppedUnits,
 	}); err != nil {
 		return protocol.TrafficBatchResult{}, err
 	}
+	p.currentLoad = nextLoad
+	p.lastUpdatedAt = now
 	return result, nil
 }
 
 func (p *Processor) allocate(
 	request protocol.TrafficBatchRequest,
 	now time.Time,
-) (protocol.TrafficBatchResult, time.Time) {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	bucket := now.Truncate(p.config.CapacityWindow)
-	if p.window.startedAt.IsZero() || !p.window.startedAt.Equal(bucket) {
-		p.window = capacityWindow{startedAt: bucket}
+) (protocol.TrafficBatchResult, float64) {
+	elapsedSeconds := 0.0
+	if !p.lastUpdatedAt.IsZero() && now.After(p.lastUpdatedAt) {
+		elapsedSeconds = now.Sub(p.lastUpdatedAt).Seconds()
 	}
-	remaining := max(0, p.config.EffectiveCapacity-p.window.processed)
-	processed := min(request.RequestUnits, remaining)
-	dropped := request.RequestUnits - processed
-	p.window.received += request.RequestUnits
-	p.window.processed += processed
-	loadRatio := float64(p.window.received) / float64(p.config.EffectiveCapacity)
-	status := "processed"
-	if processed == 0 {
+	settledLoad := max(
+		0,
+		p.currentLoad-float64(p.config.ProcessingSpeed)*elapsedSeconds,
+	)
+	available := max(0, float64(p.config.MaxLoad)-settledLoad)
+	availableUnits := int(math.Floor(available + 1e-9))
+	accepted := min(request.RequestUnits, availableUnits)
+	dropped := request.RequestUnits - accepted
+	nextLoad := min(float64(p.config.MaxLoad), settledLoad+float64(accepted))
+	loadRatio := roundThree(nextLoad / float64(p.config.MaxLoad))
+	status := "accepted"
+	if accepted == 0 {
 		status = "dropped"
 	} else if dropped > 0 {
-		status = "partially_processed"
+		status = "partially_accepted"
 	}
 	return protocol.TrafficBatchResult{
 		BatchID:          request.BatchID,
@@ -113,17 +119,21 @@ func (p *Processor) allocate(
 		OccurredAt:       now,
 		TargetInstanceID: p.config.InstanceID,
 		ReceivedUnits:    request.RequestUnits,
-		ProcessedUnits:   processed,
+		AcceptedUnits:    accepted,
 		DroppedUnits:     dropped,
 		InstanceState: protocol.InstanceState{
-			EffectiveCapacity:       p.config.EffectiveCapacity,
-			RemainingCapacity:       max(0, p.config.EffectiveCapacity-p.window.processed),
-			LoadRatio:               math.Round(loadRatio*1000) / 1000,
-			LoadState:               loadState(loadRatio),
-			CapacityWindowStartedAt: bucket,
-			CapacityWindowEndsAt:    bucket.Add(p.config.CapacityWindow),
+			ProcessingSpeed: p.config.ProcessingSpeed,
+			MaxLoad:         p.config.MaxLoad,
+			CurrentLoad:     roundThree(nextLoad),
+			LoadRatio:       loadRatio,
+			LoadState:       loadState(loadRatio),
+			ObservedAt:      now,
 		},
-	}, bucket
+	}, nextLoad
+}
+
+func roundThree(value float64) float64 {
+	return math.Round(value*1000) / 1000
 }
 
 func loadState(loadRatio float64) string {
@@ -132,7 +142,7 @@ func loadState(loadRatio float64) string {
 		return "idle"
 	case loadRatio <= 0.7:
 		return "normal"
-	case loadRatio <= 1:
+	case loadRatio < 1:
 		return "high"
 	default:
 		return "overloaded"

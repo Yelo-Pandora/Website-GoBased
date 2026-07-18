@@ -100,7 +100,7 @@ func TestCompleteProvisionIntegration(t *testing.T) {
 				InstanceName: "app-1", ContainerID: "container-1",
 				ContainerName: "lab-operation-app-1", Status: "running",
 				CPULimitCores: 0.1, MemoryLimitMB: 128,
-				PerformancePercent: 100, EffectiveCapacity: 100,
+				PerformancePercent: 100, ProcessingSpeed: 20, MaxLoad: 100,
 				CurrentWeight: 100,
 			}},
 		},

@@ -49,10 +49,12 @@ func TestRuntimeState(t *testing.T) {
 
 func TestSubmitBatchReturnsInstanceResult(t *testing.T) {
 	processor := &batchProcessorStub{result: protocol.TrafficBatchResult{
-		BatchID: "batch-test", LabID: "lab-test", Status: "processed",
+		BatchID: "batch-test", LabID: "lab-test", Status: "accepted",
 		OccurredAt:       time.Date(2026, 7, 16, 12, 0, 0, 0, time.UTC),
-		TargetInstanceID: "app-1", ReceivedUnits: 10, ProcessedUnits: 10,
-		InstanceState: protocol.InstanceState{EffectiveCapacity: 100, RemainingCapacity: 90},
+		TargetInstanceID: "app-1", ReceivedUnits: 10, AcceptedUnits: 10,
+		InstanceState: protocol.InstanceState{
+			ProcessingSpeed: 20, MaxLoad: 100, CurrentLoad: 10,
+		},
 	}}
 	router := NewRouter(
 		slog.New(slog.NewTextHandler(io.Discard, nil)),

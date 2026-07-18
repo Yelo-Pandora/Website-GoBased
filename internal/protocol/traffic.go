@@ -9,14 +9,14 @@ type TrafficBatchRequest struct {
 	RequestUnits int    `json:"requestUnits"`
 }
 
-// InstanceState describes capacity after a batch has been evaluated.
+// InstanceState describes aggregate load after a batch has been evaluated.
 type InstanceState struct {
-	EffectiveCapacity       int       `json:"effectiveCapacity"`
-	RemainingCapacity       int       `json:"remainingCapacity"`
-	LoadRatio               float64   `json:"loadRatio"`
-	LoadState               string    `json:"loadState"`
-	CapacityWindowStartedAt time.Time `json:"capacityWindowStartedAt"`
-	CapacityWindowEndsAt    time.Time `json:"capacityWindowEndsAt"`
+	ProcessingSpeed int       `json:"processingSpeed"`
+	MaxLoad         int       `json:"maxLoad"`
+	CurrentLoad     float64   `json:"currentLoad"`
+	LoadRatio       float64   `json:"loadRatio"`
+	LoadState       string    `json:"loadState"`
+	ObservedAt      time.Time `json:"observedAt"`
 }
 
 // TrafficBatchResult is the synchronous result returned by a real lab instance.
@@ -28,7 +28,7 @@ type TrafficBatchResult struct {
 	Path             []string      `json:"path"`
 	TargetInstanceID string        `json:"targetInstanceId"`
 	ReceivedUnits    int           `json:"receivedUnits"`
-	ProcessedUnits   int           `json:"processedUnits"`
+	AcceptedUnits    int           `json:"acceptedUnits"`
 	DroppedUnits     int           `json:"droppedUnits"`
 	InstanceState    InstanceState `json:"instanceState"`
 }

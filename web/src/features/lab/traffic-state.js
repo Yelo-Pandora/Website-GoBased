@@ -27,13 +27,13 @@ export function failBall(ball) {
 
 function resolveBall(ball) {
   const {result} = ball;
-  if (result.status === 'processed') {
+  if (result.status === 'accepted') {
     return [{
       ...ball,
       phase: 'moving_to_instance',
-      displayUnits: result.processedUnits,
+      displayUnits: result.acceptedUnits,
       targetInstanceId: result.targetInstanceId,
-      kind: 'processed',
+      kind: 'accepted',
     }];
   }
   if (result.status === 'dropped') {
@@ -47,11 +47,11 @@ function resolveBall(ball) {
   return [
     {
       ...ball,
-      id: `${ball.id}-processed`,
+      id: `${ball.id}-accepted`,
       phase: 'moving_to_instance',
-      displayUnits: result.processedUnits,
+      displayUnits: result.acceptedUnits,
       targetInstanceId: result.targetInstanceId,
-      kind: 'processed',
+      kind: 'accepted',
     },
     {
       ...ball,
@@ -61,4 +61,30 @@ function resolveBall(ball) {
       kind: 'dropped',
     },
   ];
+}
+
+export function estimateInstanceState(state, now = Date.now()) {
+  const observedAt = new Date(state?.observedAt || '').getTime();
+  const processingSpeed = Number(state?.processingSpeed || 0);
+  const maxLoad = Number(state?.maxLoad || 0);
+  const observedLoad = Number(state?.currentLoad || 0);
+  if (!Number.isFinite(observedAt) || processingSpeed <= 0 || maxLoad <= 0) {
+    return state || {};
+  }
+  const elapsedSeconds = Math.max(0, (now - observedAt) / 1000);
+  const currentLoad = Math.max(0, observedLoad - processingSpeed * elapsedSeconds);
+  const loadRatio = currentLoad / maxLoad;
+  return {
+    ...state,
+    currentLoad,
+    loadRatio,
+    loadState: loadState(loadRatio),
+  };
+}
+
+function loadState(loadRatio) {
+  if (loadRatio <= 0.3) return 'idle';
+  if (loadRatio <= 0.7) return 'normal';
+  if (loadRatio < 1) return 'high';
+  return 'overloaded';
 }

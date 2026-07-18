@@ -114,13 +114,16 @@ const reasonNames = {
       <TopologyPanel :lab="snapshot.lab" :topology="snapshot.topology" />
       <TrafficStage
         v-if="snapshot.lab.scenarioType === 'application_cluster' && snapshot.topology.instances.length"
+        :key="`traffic-${snapshot.lab.id}`"
         :instances="snapshot.topology.instances"
         :policy="snapshot.trafficPolicy"
+        :mode="snapshot.lab.balancingMode"
         :running="clusterRunning"
         :submit-batch="submitBatch"
       />
       <ClusterControls
         v-if="snapshot.lab.scenarioType === 'application_cluster' && snapshot.topology.instances.length"
+        :key="`cluster-${snapshot.lab.id}`"
         :instances="snapshot.topology.instances"
         :busy="busy"
         :enabled="snapshot.lab.status === 'Running'"

@@ -117,7 +117,8 @@ CREATE TABLE IF NOT EXISTS lab_instances (
   cpu_limit_cores DECIMAL(6, 3) NOT NULL,
   memory_limit_mb INT NOT NULL,
   performance_percent INT NOT NULL,
-  effective_capacity INT NOT NULL,
+  processing_speed INT NOT NULL,
+  max_load INT NOT NULL,
   current_weight INT NOT NULL,
   created_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
   updated_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6)
@@ -132,8 +133,10 @@ CREATE TABLE IF NOT EXISTS lab_instances (
     CHECK (performance_percent BETWEEN 20 AND 100),
   CONSTRAINT chk_lab_instances_memory
     CHECK (memory_limit_mb > 0),
-  CONSTRAINT chk_lab_instances_capacity
-    CHECK (effective_capacity >= 0),
+  CONSTRAINT chk_lab_instances_processing_speed
+    CHECK (processing_speed > 0),
+  CONSTRAINT chk_lab_instances_max_load
+    CHECK (max_load > 0),
   CONSTRAINT chk_lab_instances_weight
     CHECK (current_weight > 0)
 ) ENGINE=InnoDB;

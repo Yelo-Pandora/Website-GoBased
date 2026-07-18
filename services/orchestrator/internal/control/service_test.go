@@ -235,7 +235,8 @@ func TestProvisionReturnsPersistableResourceFacts(t *testing.T) {
 	}
 	instances, ok := result["instances"].([]map[string]any)
 	if !ok || len(instances) != 1 || instances[0]["status"] != "running" ||
-		instances[0]["effectiveCapacity"] != 100 || instances[0]["currentWeight"] != 100 {
+		instances[0]["processingSpeed"] != 20 || instances[0]["maxLoad"] != 100 ||
+		instances[0]["currentWeight"] != 100 {
 		t.Fatalf("provision instances = %#v", result["instances"])
 	}
 }
