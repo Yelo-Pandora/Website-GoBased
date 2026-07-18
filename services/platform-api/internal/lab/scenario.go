@@ -24,15 +24,15 @@ var scenariosByCourseSlug = map[string]scenario{
 	"multi-level-cache": {
 		Type:                "multi_level_cache",
 		TemplateID:          "multi_level_cache_scenario_v1",
-		InitialInstances:    1,
-		TemporaryContainers: 2,
+		InitialInstances:    3,
+		TemporaryContainers: 4,
 		RedisRequired:       true,
 	},
 	"cache-failures": {
 		Type:                "cache_failures",
 		TemplateID:          "cache_failures_scenario_v1",
-		InitialInstances:    1,
-		TemporaryContainers: 2,
+		InitialInstances:    3,
+		TemporaryContainers: 4,
 		RedisRequired:       true,
 	},
 }

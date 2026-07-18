@@ -55,7 +55,7 @@ func TestLoadResolvesContainerInheritance(t *testing.T) {
   "loadModel":{"baseProcessingSpeed":20,"maxLoad":100,"initialPerformancePercent":100,"minPerformancePercent":20,"maxPerformancePercent":100},
   "loadBalancing":{"initialWeight":100,"mode":"fixed"},
   "orderSimulation":{"defaultBatchSize":10,"defaultGenerationIntervalMs":250,"overloadPolicy":"drop_excess","concurrencyControl":"mutex"},
-  "productSeeds":[]
+  "productSeeds":[{"id":1,"name":"Product","category":"test","price":1,"currency":"CNY","stockLabel":"in_stock","description":"test","version":1}]
 }`)
 
 	registry, err := Load(root)

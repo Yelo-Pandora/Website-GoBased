@@ -110,6 +110,37 @@ func TestServiceObservesOnlyValidatedResults(t *testing.T) {
 	}
 }
 
+func TestServiceRequiresOneRealCacheLookupForCacheScenario(t *testing.T) {
+	result := validTrafficResult()
+	product := protocol.CacheProduct{ID: 1, Name: "Product", Category: "test", Version: 1}
+	result.Cache = &protocol.CacheResult{
+		ActualLookupCount: 1,
+		Outcome:           "found",
+		ResolvedBy:        "redis",
+		Trace: []protocol.CacheTraceStep{
+			{Layer: "l1", Result: "miss"},
+			{Layer: "redis", Result: "hit"},
+		},
+		Product: &product, SimulatedLatencyMS: 320,
+		ObservedAt: result.OccurredAt, Deltas: []protocol.CacheDelta{},
+	}
+	snapshot := runningSnapshot()
+	snapshot.Lab.ScenarioType = "multi_level_cache"
+	service := NewService(labReaderStub{snapshot: snapshot}, batchClientStub{result: result}, limiterStub(true))
+	if _, err := service.Submit(context.Background(), 7, "lab-test", protocol.TrafficBatchRequest{
+		BatchID: "batch-test", ProductID: 1, RequestUnits: 10,
+	}); err != nil {
+		t.Fatalf("Submit() error = %v", err)
+	}
+	result.Cache.ActualLookupCount = 10
+	service = NewService(labReaderStub{snapshot: snapshot}, batchClientStub{result: result}, limiterStub(true))
+	if _, err := service.Submit(context.Background(), 7, "lab-test", protocol.TrafficBatchRequest{
+		BatchID: "batch-test", ProductID: 1, RequestUnits: 10,
+	}); !errors.Is(err, ErrUnavailable) {
+		t.Fatalf("Submit() error = %v; want ErrUnavailable", err)
+	}
+}
+
 func runningSnapshot() lab.Snapshot {
 	return lab.Snapshot{
 		Lab: lab.Session{ID: "lab-test", Status: lab.StatusRunning},

@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"time"
+
+	"website-gobased/internal/protocol"
 )
 
 var (
@@ -186,12 +188,13 @@ type TrafficPolicy struct {
 
 // Snapshot contains the state required to restore a lab page after a refresh.
 type Snapshot struct {
-	Lab             Session            `json:"lab"`
-	Topology        Topology           `json:"topology"`
-	Resources       []Resource         `json:"-"`
-	LatestOperation *OperationSnapshot `json:"latestOperation"`
-	TrafficPolicy   TrafficPolicy      `json:"trafficPolicy"`
-	Balancer        *BalancerSnapshot  `json:"balancer"`
+	Lab             Session              `json:"lab"`
+	Topology        Topology             `json:"topology"`
+	Resources       []Resource           `json:"-"`
+	LatestOperation *OperationSnapshot   `json:"latestOperation"`
+	TrafficPolicy   TrafficPolicy        `json:"trafficPolicy"`
+	Balancer        *BalancerSnapshot    `json:"balancer"`
+	Cache           *protocol.CacheState `json:"cache,omitempty"`
 }
 
 // CreatedOperation is the operation created atomically with a lab session.

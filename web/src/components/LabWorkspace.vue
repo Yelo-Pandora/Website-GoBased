@@ -10,6 +10,7 @@ import {
 import {computed} from 'vue';
 
 import ClusterControls from './ClusterControls.vue';
+import CacheStage from './CacheStage.vue';
 import LifecyclePanel from './LifecyclePanel.vue';
 import OperationPanel from './OperationPanel.vue';
 import TrafficStage from './TrafficStage.vue';
@@ -32,6 +33,8 @@ const active = computed(() => activeStatuses.has(props.snapshot?.lab?.status));
 const canReset = computed(() => ['Running', 'Expiring'].includes(props.snapshot?.lab?.status));
 const canTerminate = computed(() => ['Preparing', 'Running', 'Expiring', 'Failed'].includes(props.snapshot?.lab?.status));
 const clusterRunning = computed(() => props.snapshot?.lab?.scenarioType === 'application_cluster' &&
+  props.snapshot?.lab?.status === 'Running' && !props.busy);
+const cacheRunning = computed(() => ['multi_level_cache', 'cache_failures'].includes(props.snapshot?.lab?.scenarioType) &&
   props.snapshot?.lab?.status === 'Running' && !props.busy);
 
 const statusNames = {
@@ -119,6 +122,15 @@ const reasonNames = {
         :policy="snapshot.trafficPolicy"
         :mode="snapshot.lab.balancingMode"
         :running="clusterRunning"
+        :submit-batch="submitBatch"
+      />
+      <CacheStage
+        v-if="['multi_level_cache', 'cache_failures'].includes(snapshot.lab.scenarioType) && snapshot.topology.instances.length"
+        :key="`cache-${snapshot.lab.id}`"
+        :instances="snapshot.topology.instances"
+        :policy="snapshot.trafficPolicy"
+        :cache-state="snapshot.cache"
+        :running="cacheRunning"
         :submit-batch="submitBatch"
       />
       <ClusterControls

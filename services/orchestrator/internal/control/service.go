@@ -68,6 +68,7 @@ type dockerOperator interface {
 
 type databaseOperator interface {
 	Provision(ctx context.Context, databaseName, userName, password string) error
+	SeedProducts(ctx context.Context, databaseName string, products []labdb.ProductSeed) error
 	Reset(ctx context.Context, databaseName string) error
 	Destroy(ctx context.Context, databaseName, userName string) error
 	ListManaged(ctx context.Context) ([]labdb.ManagedDatabase, error)
@@ -241,6 +242,19 @@ func (s *Service) provision(
 	if err := s.database.Provision(ctx, names.database, names.databaseUser, password); err != nil {
 		return nil, fail("LAB_DATABASE_UNAVAILABLE", "lab database could not be provisioned", err)
 	}
+	if payload.RedisRequired {
+		seeds := make([]labdb.ProductSeed, 0, len(scenario.ProductSeeds))
+		for _, value := range scenario.ProductSeeds {
+			seeds = append(seeds, labdb.ProductSeed{
+				ID: value.ID, Name: value.Name, Category: value.Category,
+				Price: value.Price, Currency: value.Currency, StockLabel: value.StockLabel,
+				Description: value.Description, Version: value.Version,
+			})
+		}
+		if err := s.database.SeedProducts(ctx, names.database, seeds); err != nil {
+			return nil, fail("LAB_DATABASE_UNAVAILABLE", "lab products could not be seeded", err)
+		}
+	}
 
 	networkTemplate, _ := s.registry.Network(scenario.ResourceTemplates.Network)
 	labels := resourceLabels(command, "lab-network", networkTemplate.TemplateID)
@@ -257,6 +271,18 @@ func (s *Service) provision(
 	}
 	if err := s.connectFixedServices(ctx, network.ID); err != nil {
 		return nil, fail("DOCKER_UNAVAILABLE", "lab network could not connect fixed services", err)
+	}
+
+	redisResult := map[string]any(nil)
+	if payload.RedisRequired {
+		container, err := s.ensureRedis(ctx, command, scenario, names)
+		if err != nil {
+			return nil, fail("DOCKER_UNAVAILABLE", "session Redis could not be provisioned", err)
+		}
+		redisResult = map[string]any{
+			"containerId": container.ID, "containerName": container.Name,
+			"status": "running",
+		}
 	}
 
 	instances := make([]map[string]any, 0, payload.InitialInstances)
@@ -294,17 +320,6 @@ func (s *Service) provision(
 			Host: names.appContainer(instanceName), Port: 8080,
 			Weight: scenario.LoadBalancing.InitialWeight,
 		})
-	}
-	redisResult := map[string]any(nil)
-	if payload.RedisRequired {
-		container, err := s.ensureRedis(ctx, command, scenario, names)
-		if err != nil {
-			return nil, fail("DOCKER_UNAVAILABLE", "session Redis could not be provisioned", err)
-		}
-		redisResult = map[string]any{
-			"containerId": container.ID, "containerName": container.Name,
-			"status": "running",
-		}
 	}
 	if err := s.nginx.Apply(ctx, command.LabID, servers); err != nil {
 		return nil, fail("NGINX_CONFIG_INVALID", "lab gateway configuration could not be applied", err)
@@ -346,7 +361,7 @@ func (s *Service) resetLab(ctx context.Context, command protocol.Command) (any, 
 		CourseID:           1,
 		ScenarioType:       scenario.ScenarioType,
 		ScenarioTemplateID: scenario.TemplateID,
-		InitialInstances:   1,
+		InitialInstances:   max(1, scenario.Topology.InitialInstances),
 		RedisRequired:      scenario.ResourceTemplates.Redis != "",
 	})
 	if err != nil {
@@ -773,8 +788,18 @@ func (s *Service) ensureApp(
 			"PROCESSING_SPEED": strconv.Itoa(
 				scenario.LoadModel.BaseProcessingSpeed * performance / 100,
 			),
-			"MAX_LOAD": strconv.Itoa(scenario.LoadModel.MaxLoad),
-			"TZ":       "UTC",
+			"MAX_LOAD":                     strconv.Itoa(scenario.LoadModel.MaxLoad),
+			"REDIS_ADDR":                   "lab-redis:6379",
+			"CACHE_L1_MAX_PRODUCT_ENTRIES": strconv.Itoa(scenario.Cache.L1MaxProductEntries),
+			"CACHE_INSTANCE_COUNT":         strconv.Itoa(max(1, scenario.Topology.InitialInstances)),
+			"CACHE_L1_TTL_MS":              strconv.Itoa(scenario.Cache.L1TTLMS),
+			"CACHE_L2_TTL_MS":              strconv.Itoa(scenario.Cache.L2TTLMS),
+			"CACHE_L2_TTL_JITTER_PERCENT":  strconv.Itoa(scenario.Cache.L2TTLJitterPercent),
+			"CACHE_LATENCY_L1_MS":          strconv.Itoa(scenario.Cache.SimulatedLatencyMS.L1),
+			"CACHE_LATENCY_REDIS_MS":       strconv.Itoa(scenario.Cache.SimulatedLatencyMS.Redis),
+			"CACHE_LATENCY_MYSQL_MS":       strconv.Itoa(scenario.Cache.SimulatedLatencyMS.MySQL),
+			"CACHE_LATENCY_DEGRADED_MS":    strconv.Itoa(scenario.Cache.SimulatedLatencyMS.Degraded),
+			"TZ":                           "UTC",
 		},
 		Labels: labels, NetworkName: names.network,
 		NetworkAliases: []string{names.appContainer(instanceName)},

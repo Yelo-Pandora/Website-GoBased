@@ -181,6 +181,15 @@ func validResult(
 	if !validStatus || !validLoadState {
 		return false
 	}
+	isCacheScenario := snapshot.Lab.ScenarioType == "multi_level_cache" ||
+		snapshot.Lab.ScenarioType == "cache_failures"
+	if isCacheScenario {
+		if !validCacheResult(request, result) {
+			return false
+		}
+	} else if result.Cache != nil {
+		return false
+	}
 	for _, instance := range snapshot.Topology.Instances {
 		if instance.ID == result.TargetInstanceID &&
 			instance.ProcessingSpeed == result.InstanceState.ProcessingSpeed &&
@@ -189,4 +198,37 @@ func validResult(
 		}
 	}
 	return false
+}
+
+func validCacheResult(request protocol.TrafficBatchRequest, result protocol.TrafficBatchResult) bool {
+	value := result.Cache
+	if value == nil || value.ActualLookupCount != 1 || value.ObservedAt.IsZero() ||
+		!value.ObservedAt.Equal(result.OccurredAt) || value.SimulatedLatencyMS <= 0 ||
+		len(value.Trace) == 0 || len(value.Trace) > 3 {
+		return false
+	}
+	validResolvedBy := value.ResolvedBy == "l1" || value.ResolvedBy == "redis" ||
+		value.ResolvedBy == "mysql" || value.ResolvedBy == "negative_cache" ||
+		value.ResolvedBy == "bloom_filter" || value.ResolvedBy == "degraded"
+	if !validResolvedBy || (value.Outcome != "found" && value.Outcome != "not_found") {
+		return false
+	}
+	if value.Outcome == "found" {
+		if value.Product == nil || value.Product.ID != request.ProductID ||
+			value.Product.Name == "" || value.Product.Category == "" || value.Product.Version <= 0 {
+			return false
+		}
+	} else if value.Product != nil {
+		return false
+	}
+	for _, step := range value.Trace {
+		if step.Layer != "l1" && step.Layer != "redis" && step.Layer != "mysql" {
+			return false
+		}
+		if step.Result != "hit" && step.Result != "miss" && step.Result != "not_found" &&
+			step.Result != "unavailable" {
+			return false
+		}
+	}
+	return true
 }

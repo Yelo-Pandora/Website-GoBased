@@ -25,6 +25,25 @@
     "initialWeight": 100,
     "mode": "fixed"
   },
+  "topology": {
+    "initialInstances": 3,
+    "minimumInstances": 1,
+    "maximumInstances": 3
+  },
+  "cache": {
+    "l1MaxProductEntries": 9,
+    "l1TtlMs": 15000,
+    "l2TtlMs": 30000,
+    "l2TtlJitterPercent": 20,
+    "simulatedLatencyMs": {
+      "l1": 120,
+      "redis": 320,
+      "mysql": 800,
+      "negativeCache": 160,
+      "bloomFilter": 80,
+      "degraded": 500
+    }
+  },
   "orderSimulation": {
     "defaultBatchSize": 10,
     "defaultGenerationIntervalMs": 250,
@@ -44,13 +63,23 @@
     },
     {
       "id": 2,
-      "name": "Distributed Systems Handbook",
-      "category": "books",
+      "name": "Edge Wireless Router",
+      "category": "electronics",
       "price": 129.0,
       "currency": "CNY",
       "stockLabel": "in_stock",
       "description": "Product used by the multi-level cache lab.",
       "version": 1
-    }
+    },
+    {"id":3,"name":"Mechanical Lab Keyboard","category":"electronics","price":499.0,"currency":"CNY","stockLabel":"in_stock","description":"Product used by the multi-level cache lab.","version":1},
+    {"id":4,"name":"Distributed Systems Handbook","category":"books","price":129.0,"currency":"CNY","stockLabel":"in_stock","description":"Product used by the multi-level cache lab.","version":1},
+    {"id":5,"name":"Database Internals Guide","category":"books","price":139.0,"currency":"CNY","stockLabel":"in_stock","description":"Product used by the multi-level cache lab.","version":1},
+    {"id":6,"name":"Go Concurrency Workbook","category":"books","price":99.0,"currency":"CNY","stockLabel":"in_stock","description":"Product used by the multi-level cache lab.","version":1},
+    {"id":7,"name":"Smart Desk Lamp","category":"home","price":259.0,"currency":"CNY","stockLabel":"in_stock","description":"Product used by the multi-level cache lab.","version":1},
+    {"id":8,"name":"Room Temperature Sensor","category":"home","price":169.0,"currency":"CNY","stockLabel":"in_stock","description":"Product used by the multi-level cache lab.","version":1},
+    {"id":9,"name":"Air Quality Monitor","category":"home","price":399.0,"currency":"CNY","stockLabel":"in_stock","description":"Product used by the multi-level cache lab.","version":1},
+    {"id":10,"name":"Trail Running Shoes","category":"sports","price":699.0,"currency":"CNY","stockLabel":"in_stock","description":"Product used by the multi-level cache lab.","version":1},
+    {"id":11,"name":"Carbon Badminton Racket","category":"sports","price":599.0,"currency":"CNY","stockLabel":"in_stock","description":"Product used by the multi-level cache lab.","version":1},
+    {"id":12,"name":"Fitness Activity Tracker","category":"sports","price":329.0,"currency":"CNY","stockLabel":"in_stock","description":"Product used by the multi-level cache lab.","version":1}
   ]
 }

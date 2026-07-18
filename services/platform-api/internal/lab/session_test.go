@@ -215,7 +215,7 @@ func TestScenarioForCourse(t *testing.T) {
 	t.Parallel()
 
 	scenario, ok := scenarioForCourse("multi-level-cache", "active")
-	if !ok || !scenario.RedisRequired || scenario.TemporaryContainers != 2 {
+	if !ok || !scenario.RedisRequired || scenario.TemporaryContainers != 4 || scenario.InitialInstances != 3 {
 		t.Fatalf("scenarioForCourse() = %#v, %t", scenario, ok)
 	}
 	if _, ok := scenarioForCourse("standalone-architecture", "theory"); ok {

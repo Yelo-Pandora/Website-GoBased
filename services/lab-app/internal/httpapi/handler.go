@@ -16,10 +16,11 @@ import (
 type handler struct {
 	identity RuntimeIdentity
 	batches  batchProcessor
+	cache    cacheStateProvider
 }
 
-func newHandler(identity RuntimeIdentity, batches batchProcessor) *handler {
-	return &handler{identity: identity, batches: batches}
+func newHandler(identity RuntimeIdentity, batches batchProcessor, cache cacheStateProvider) *handler {
+	return &handler{identity: identity, batches: batches, cache: cache}
 }
 
 func (h *handler) submitBatch(ctx *gin.Context) {
@@ -75,4 +76,17 @@ func (h *handler) runtimeState(ctx *gin.Context) {
 		"status":   "scaffold",
 		"identity": h.identity,
 	})
+}
+
+func (h *handler) cacheState(ctx *gin.Context) {
+	if h.cache == nil {
+		writeBatchError(ctx, http.StatusNotFound, "CACHE_NOT_AVAILABLE", "cache runtime is not available")
+		return
+	}
+	state, err := h.cache.State(ctx.Request.Context())
+	if err != nil {
+		writeBatchError(ctx, http.StatusServiceUnavailable, "LAB_UNAVAILABLE", "cache state is unavailable")
+		return
+	}
+	ctx.JSON(http.StatusOK, gin.H{"data": gin.H{"cache": state}})
 }

@@ -27,6 +27,7 @@ type handler struct {
 	authentication authenticationService
 	authConfig     AuthConfig
 	traffic        trafficService
+	cacheStates    *traffic.Client
 }
 
 func newHandler(
@@ -37,8 +38,9 @@ func newHandler(
 	labs labService,
 	authentication authenticationService,
 	authConfig AuthConfig,
-	traffic trafficService,
+	trafficValue trafficService,
 ) *handler {
+	cacheStates, _ := traffic.NewClient(labGatewayAddr, 2*time.Second)
 	return &handler{
 		logger:         logger,
 		database:       database,
@@ -47,7 +49,8 @@ func newHandler(
 		labs:           labs,
 		authentication: authentication,
 		authConfig:     authConfig,
-		traffic:        traffic,
+		traffic:        trafficValue,
+		cacheStates:    cacheStates,
 	}
 }
 
@@ -190,6 +193,12 @@ func (h *handler) getLab(ctx *gin.Context) {
 	if err != nil {
 		h.writeLabError(ctx, err)
 		return
+	}
+	if h.cacheStates != nil && (snapshot.Lab.ScenarioType == "multi_level_cache" || snapshot.Lab.ScenarioType == "cache_failures") && snapshot.Lab.Status == lab.StatusRunning {
+		cacheState, cacheErr := h.cacheStates.CacheState(ctx.Request.Context(), snapshot.Lab.ID)
+		if cacheErr == nil {
+			snapshot.Cache = &cacheState
+		}
 	}
 	ctx.JSON(http.StatusOK, gin.H{"data": snapshot})
 }

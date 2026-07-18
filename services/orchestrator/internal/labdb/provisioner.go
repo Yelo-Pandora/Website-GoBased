@@ -19,6 +19,18 @@ type ManagedDatabase struct {
 	UserName     string
 }
 
+// ProductSeed is one trusted scenario product inserted into a lab database.
+type ProductSeed struct {
+	ID          uint64
+	Name        string
+	Category    string
+	Price       float64
+	Currency    string
+	StockLabel  string
+	Description string
+	Version     int
+}
+
 // Provisioner invokes only the allowlisted platform stored procedures.
 type Provisioner struct {
 	database database
@@ -51,6 +63,33 @@ func (p *Provisioner) Provision(
 		password,
 	); err != nil {
 		return fmt.Errorf("provision lab database: %w", err)
+	}
+	return nil
+}
+
+// SeedProducts replaces the bounded catalog using trusted scenario data.
+func (p *Provisioner) SeedProducts(
+	ctx context.Context,
+	databaseName string,
+	products []ProductSeed,
+) error {
+	if !validDatabaseName(databaseName) || len(products) != 12 {
+		return errors.New("lab product seeds are invalid")
+	}
+	seen := make(map[uint64]bool, len(products))
+	for _, value := range products {
+		if value.ID == 0 || seen[value.ID] || value.Name == "" || value.Category == "" || value.Price < 0 ||
+			len(value.Currency) != 3 || value.StockLabel == "" || value.Version <= 0 {
+			return errors.New("lab product seed is invalid")
+		}
+		seen[value.ID] = true
+	}
+	if _, err := p.database.ExecContext(
+		ctx,
+		"CALL platform.seed_cache_lab_products(?)",
+		databaseName,
+	); err != nil {
+		return fmt.Errorf("seed cache lab products: %w", err)
 	}
 	return nil
 }

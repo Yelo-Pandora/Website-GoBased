@@ -138,6 +138,25 @@ type Scenario struct {
 		OverloadPolicy              string `json:"overloadPolicy"`
 		ConcurrencyControl          string `json:"concurrencyControl"`
 	} `json:"orderSimulation"`
+	Topology struct {
+		InitialInstances int `json:"initialInstances"`
+		MinimumInstances int `json:"minimumInstances"`
+		MaximumInstances int `json:"maximumInstances"`
+	} `json:"topology"`
+	Cache struct {
+		L1MaxProductEntries int `json:"l1MaxProductEntries"`
+		L1TTLMS             int `json:"l1TtlMs"`
+		L2TTLMS             int `json:"l2TtlMs"`
+		L2TTLJitterPercent  int `json:"l2TtlJitterPercent"`
+		SimulatedLatencyMS  struct {
+			L1            int `json:"l1"`
+			Redis         int `json:"redis"`
+			MySQL         int `json:"mysql"`
+			NegativeCache int `json:"negativeCache"`
+			BloomFilter   int `json:"bloomFilter"`
+			Degraded      int `json:"degraded"`
+		} `json:"simulatedLatencyMs"`
+	} `json:"cache"`
 	ProductSeeds []ProductSeed `json:"productSeeds"`
 }
 
@@ -329,6 +348,31 @@ func (r *Registry) validateScenario(value Scenario) error {
 	}
 	if value.LoadBalancing.InitialWeight <= 0 || value.LoadBalancing.Mode == "" {
 		return errors.New("scenario load balancing settings are invalid")
+	}
+	if len(value.ProductSeeds) == 0 || len(value.ProductSeeds) > 64 {
+		return errors.New("scenario product seeds are invalid")
+	}
+	seenProducts := make(map[uint64]bool, len(value.ProductSeeds))
+	for _, product := range value.ProductSeeds {
+		if product.ID == 0 || seenProducts[product.ID] || product.Name == "" ||
+			product.Category == "" || product.Price < 0 || len(product.Currency) != 3 ||
+			product.StockLabel == "" || product.Version <= 0 {
+			return errors.New("scenario product seed is invalid")
+		}
+		seenProducts[product.ID] = true
+	}
+	if value.ResourceTemplates.Redis != "" {
+		if value.Topology.InitialInstances <= 0 ||
+			value.Topology.MinimumInstances <= 0 ||
+			value.Topology.InitialInstances < value.Topology.MinimumInstances ||
+			value.Topology.InitialInstances > value.Topology.MaximumInstances ||
+			value.Cache.L1MaxProductEntries <= 0 || value.Cache.L1TTLMS <= 0 ||
+			value.Cache.L2TTLMS <= 0 || value.Cache.L2TTLJitterPercent < 0 ||
+			value.Cache.L2TTLJitterPercent > 50 || value.Cache.SimulatedLatencyMS.L1 <= 0 ||
+			value.Cache.SimulatedLatencyMS.Redis <= 0 || value.Cache.SimulatedLatencyMS.MySQL <= 0 ||
+			value.Cache.SimulatedLatencyMS.Degraded <= 0 {
+			return errors.New("scenario cache settings are invalid")
+		}
 	}
 	return nil
 }

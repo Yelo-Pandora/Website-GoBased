@@ -91,6 +91,41 @@ func (c *Client) Submit(
 	return envelope.Data.Result, nil
 }
 
+// CacheState reads the bounded cache inventory through the fixed lab gateway.
+func (c *Client) CacheState(ctx context.Context, labID string) (protocol.CacheState, error) {
+	target := *c.baseURL
+	target.Path = strings.TrimRight(target.Path, "/") + "/internal/cache-state"
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, target.String(), nil)
+	if err != nil {
+		return protocol.CacheState{}, fmt.Errorf("create cache state request: %w", err)
+	}
+	request.Host = labID + ".lab.internal"
+	response, err := c.client.Do(request)
+	if err != nil {
+		return protocol.CacheState{}, fmt.Errorf("read cache state: %w", err)
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusOK {
+		return protocol.CacheState{}, fmt.Errorf("cache gateway status: %s", response.Status)
+	}
+	reader := io.LimitReader(response.Body, maxResponseBytes+1)
+	body, err := io.ReadAll(reader)
+	if err != nil || len(body) > maxResponseBytes {
+		return protocol.CacheState{}, errors.New("cache state response is invalid")
+	}
+	var envelope struct {
+		Data struct {
+			Cache protocol.CacheState `json:"cache"`
+		} `json:"data"`
+	}
+	decoder := json.NewDecoder(bytes.NewReader(body))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&envelope); err != nil {
+		return protocol.CacheState{}, fmt.Errorf("decode cache state: %w", err)
+	}
+	return envelope.Data.Cache, nil
+}
+
 // CloseIdleConnections closes pooled gateway connections.
 func (c *Client) CloseIdleConnections() {
 	c.client.CloseIdleConnections()

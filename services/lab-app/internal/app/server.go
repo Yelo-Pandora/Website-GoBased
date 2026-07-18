@@ -10,6 +10,8 @@ import (
 	"net/http"
 	"time"
 
+	"website-gobased/internal/protocol"
+	cacheprocessor "website-gobased/services/lab-app/internal/cache"
 	"website-gobased/services/lab-app/internal/httpapi"
 	"website-gobased/services/lab-app/internal/order"
 	"website-gobased/services/lab-app/internal/product"
@@ -31,18 +33,47 @@ func Run(ctx context.Context, cfg Config, logger *slog.Logger) error {
 	if err != nil {
 		return fmt.Errorf("connect lab database: %w", err)
 	}
-	processor, err := order.NewProcessor(
-		product.NewRepository(database),
-		order.NewRepository(database),
-		order.Config{
-			LabID:           cfg.LabID,
-			InstanceID:      cfg.InstanceID,
-			ProcessingSpeed: cfg.ProcessingSpeed,
-			MaxLoad:         cfg.MaxLoad,
-		},
-	)
-	if err != nil {
-		return fmt.Errorf("configure order processor: %w", err)
+	productRepository := product.NewRepository(database)
+	var processor interface {
+		Process(context.Context, protocol.TrafficBatchRequest) (protocol.TrafficBatchResult, error)
+	}
+	var closeProcessor func() error
+	if cfg.ScenarioType == "multi_level_cache" || cfg.ScenarioType == "cache_failures" {
+		cacheProcessor, cacheErr := cacheprocessor.NewProcessor(
+			productRepository,
+			cfg.RedisAddr,
+			cacheprocessor.Config{
+				LabID: cfg.LabID, InstanceID: cfg.InstanceID,
+				InstanceCount:   cfg.CacheInstanceCount,
+				ProcessingSpeed: cfg.ProcessingSpeed, MaxLoad: cfg.MaxLoad,
+				L1MaxEntries: cfg.CacheL1MaxEntries, L1TTL: cfg.CacheL1TTL,
+				L2TTL: cfg.CacheL2TTL, L2JitterPercent: cfg.CacheL2JitterPercent,
+				LatencyL1MS: cfg.CacheLatencyL1MS, LatencyRedisMS: cfg.CacheLatencyRedisMS,
+				LatencyMySQLMS:    cfg.CacheLatencyMySQLMS,
+				LatencyDegradedMS: cfg.CacheLatencyDegradedMS,
+			},
+		)
+		if cacheErr != nil {
+			return fmt.Errorf("configure cache processor: %w", cacheErr)
+		}
+		processor = cacheProcessor
+		closeProcessor = cacheProcessor.Close
+	} else {
+		orderProcessor, orderErr := order.NewProcessor(
+			productRepository,
+			order.NewRepository(database),
+			order.Config{
+				LabID: cfg.LabID, InstanceID: cfg.InstanceID,
+				ProcessingSpeed: cfg.ProcessingSpeed, MaxLoad: cfg.MaxLoad,
+			},
+		)
+		if orderErr != nil {
+			return fmt.Errorf("configure order processor: %w", orderErr)
+		}
+		processor = orderProcessor
+	}
+	if closeProcessor != nil {
+		defer closeProcessor()
 	}
 	server := &http.Server{
 		Addr: cfg.Addr,

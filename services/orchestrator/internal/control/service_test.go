@@ -100,6 +100,13 @@ func (d *databaseStub) Provision(context.Context, string, string, string) error 
 	d.provisionCount++
 	return nil
 }
+
+func (d *databaseStub) SeedProducts(context.Context, string, []labdb.ProductSeed) error {
+	if d.failProvision {
+		return errors.New("database unavailable")
+	}
+	return nil
+}
 func (*databaseStub) Reset(context.Context, string) error { return nil }
 func (d *databaseStub) Destroy(_ context.Context, databaseName string, _ string) error {
 	d.destroyed = true
