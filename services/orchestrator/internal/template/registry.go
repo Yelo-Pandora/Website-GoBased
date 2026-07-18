@@ -152,8 +152,6 @@ type Scenario struct {
 			L1            int `json:"l1"`
 			Redis         int `json:"redis"`
 			MySQL         int `json:"mysql"`
-			NegativeCache int `json:"negativeCache"`
-			BloomFilter   int `json:"bloomFilter"`
 			Degraded      int `json:"degraded"`
 		} `json:"simulatedLatencyMs"`
 	} `json:"cache"`

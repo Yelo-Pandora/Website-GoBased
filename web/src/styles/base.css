@@ -1156,7 +1156,9 @@ code {
 .cache-node--gateway { border-color: #82a9a0; }
 .cache-node--redis { border-color: #5e9a7d; }
 .cache-node--redis[data-status="unavailable"] { background: #fff3f1; border-color: var(--red); }
+.cache-node--redis[data-status="absent"] { background: #f0f2f1; border-style: dashed; color: var(--ink-muted); }
 .cache-node--mysql { border-color: #b3a15e; }
+.cache-node--app[data-l1="disabled"] { background: #f0f2f1; border-style: dashed; color: var(--ink-muted); }
 
 .cache-app-stack {
   align-self: stretch;
@@ -1264,12 +1266,16 @@ code {
 }
 
 .cache-inventory--redis { grid-column: 1 / -1; }
+.cache-inventory[data-status="disabled"],
+.cache-inventory--redis[data-status="absent"] { background: #f4f5f5; border-style: dashed; }
 .cache-inventory header,
 .cache-inventory header span { align-items: center; display: flex; }
 .cache-inventory header { gap: 8px; justify-content: space-between; }
 .cache-inventory header span { gap: 7px; }
 .cache-inventory header strong { font-size: 12px; }
 .cache-inventory header small { color: var(--ink-muted); font-size: 10px; }
+.cache-inventory__actions { gap: 8px !important; }
+.button--compact { gap: 4px; min-height: 30px; padding: 4px 8px; }
 
 .cache-entry-grid {
   display: grid;

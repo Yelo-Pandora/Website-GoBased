@@ -43,3 +43,14 @@ func TestContentStoreReturnsComingSoonContent(t *testing.T) {
 		t.Fatal("coming-soon lab is available")
 	}
 }
+
+func TestCacheFailuresCourseIsTheoryOnly(t *testing.T) {
+	store := NewContentStore()
+	content, _, lab := store.For(Course{Slug: "cache-failures", Title: "缓存故障"})
+	if lab.Available || lab.ScenarioType != "" || lab.AllowedInstanceRange != nil {
+		t.Fatalf("cache failures lab = %#v; want theory only", lab)
+	}
+	if !strings.Contains(content, "不提供独立缓存故障实验") {
+		t.Fatal("cache failures theory does not state the experiment boundary")
+	}
+}

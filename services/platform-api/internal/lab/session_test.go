@@ -25,6 +25,20 @@ type actionRepositoryStub struct {
 	action       string
 	labID        string
 	operationID  string
+	cacheInput   ActionInput
+}
+
+func (s *actionRepositoryStub) EnqueueCacheAction(
+	_ context.Context,
+	_ uint64,
+	labID string,
+	input ActionInput,
+	_ time.Time,
+) (ActionResult, error) {
+	s.labID = labID
+	s.operationID = input.OperationID
+	s.cacheInput = input
+	return s.actionResult, s.actionErr
 }
 
 func (s *actionRepositoryStub) EnqueueAction(
@@ -209,6 +223,58 @@ func TestValidActionInputAcceptsOnlyKnownBalancingModes(t *testing.T) {
 	}) {
 		t.Fatal("validActionInput() accepted mixed mode and weight parameters")
 	}
+}
+
+func TestServiceDispatchesCacheLayerActions(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name     string
+		action   string
+		targetID *string
+	}{
+		{name: "remove L1", action: ActionRemoveInstanceL1, targetID: pointerTo("app-2")},
+		{name: "add L1", action: ActionAddInstanceL1, targetID: pointerTo("app-2")},
+		{name: "remove Redis", action: ActionRemoveSessionRedis},
+		{name: "add Redis", action: ActionAddSessionRedis},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			repository := &actionRepositoryStub{}
+			service := newService(repository, Quota{
+				MaxActiveLabs: 10, MaxTemporaryContainers: 40, MaxInstancesPerLab: 4,
+			})
+			input := ActionInput{
+				OperationID: "operation-cache", ActionType: test.action,
+				TargetInstanceID: test.targetID,
+			}
+			if _, err := service.Action(context.Background(), 7, "lab-test1234", input); err != nil {
+				t.Fatalf("Action() error = %v", err)
+			}
+			if repository.cacheInput.ActionType != test.action || repository.labID != "lab-test1234" {
+				t.Fatalf("cache action capture = %#v", repository)
+			}
+		})
+	}
+}
+
+func TestValidActionInputRejectsCacheActionParameterMixes(t *testing.T) {
+	t.Parallel()
+	performance := 100
+	if validActionInput(ActionInput{
+		ActionType: ActionRemoveSessionRedis, TargetInstanceID: pointerTo("app-1"),
+	}) {
+		t.Fatal("Redis action accepted a target instance")
+	}
+	if validActionInput(ActionInput{
+		ActionType: ActionRemoveInstanceL1, TargetInstanceID: pointerTo("app-1"),
+		PerformancePercent: &performance,
+	}) {
+		t.Fatal("L1 action accepted a performance parameter")
+	}
+}
+
+func pointerTo(value string) *string {
+	return &value
 }
 
 func TestScenarioForCourse(t *testing.T) {

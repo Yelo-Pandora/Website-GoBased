@@ -433,6 +433,80 @@ func (r *Repository) CompleteTopology(
 	return nil
 }
 
+func (r *Repository) CompleteCache(
+	ctx context.Context,
+	record Record,
+	resultValue CacheResult,
+	errorCode string,
+	errorMessage string,
+	now time.Time,
+) error {
+	tx, err := r.database.BeginTx(ctx, &sql.TxOptions{Isolation: sql.LevelReadCommitted})
+	if err != nil {
+		return fmt.Errorf("begin complete cache transaction: %w", err)
+	}
+	defer tx.Rollback()
+	status := StatusFailed
+	var resultJSON []byte
+	if errorCode == "" {
+		switch record.Action {
+		case ActionRemoveSessionRedis:
+			if _, err := tx.ExecContext(ctx, `
+				UPDATE lab_resources SET status = 'deleted', external_id = NULL, updated_at = ?
+				WHERE lab_id = ? AND resource_type = 'session-redis'`, now, record.LabID); err != nil {
+				return fmt.Errorf("mark Redis deleted: %w", err)
+			}
+		case ActionAddSessionRedis:
+			if resultValue.Redis == nil || resultValue.Redis.ContainerID == "" || resultValue.Redis.ContainerName == "" {
+				return errors.New("Redis result is incomplete")
+			}
+			if _, err := tx.ExecContext(ctx, `
+				INSERT INTO lab_resources (
+					lab_id, resource_type, resource_name, external_id, status, created_at, updated_at
+				) VALUES (?, 'session-redis', ?, ?, 'ready', ?, ?)
+				ON DUPLICATE KEY UPDATE external_id = VALUES(external_id), status = 'ready', updated_at = VALUES(updated_at)`,
+				record.LabID, resultValue.Redis.ContainerName, resultValue.Redis.ContainerID, now, now,
+			); err != nil {
+				return fmt.Errorf("persist Redis resource: %w", err)
+			}
+		}
+		status = StatusSucceeded
+		resultJSON, err = json.Marshal(resultValue)
+		if err != nil {
+			return fmt.Errorf("encode cache result: %w", err)
+		}
+	}
+	if err := completeOperationRecord(
+		ctx, tx, record, status, resultJSON, errorCode, errorMessage, now,
+	); err != nil {
+		return err
+	}
+	if errorCode == "" {
+		redisEnabled := record.Action != ActionRemoveSessionRedis
+		if record.Action != ActionAddSessionRedis && record.Action != ActionRemoveSessionRedis {
+			var current bool
+			if err := tx.QueryRowContext(ctx, "SELECT redis_enabled FROM lab_sessions WHERE id = ?", record.LabID).Scan(&current); err != nil {
+				return fmt.Errorf("read Redis session state: %w", err)
+			}
+			redisEnabled = current
+		}
+		result, err := tx.ExecContext(ctx, `
+			UPDATE lab_sessions
+			SET redis_enabled = ?, last_effective_action_at = ?, updated_at = ?
+			WHERE id = ? AND status = ?`, redisEnabled, now, now, record.LabID, lab.StatusRunning)
+		if err != nil {
+			return fmt.Errorf("update cache lab activity: %w", err)
+		}
+		if err := requireOneRow(result); err != nil {
+			return lab.ErrStateConflict
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit cache action: %w", err)
+	}
+	return nil
+}
+
 func applyTopologyResult(
 	ctx context.Context,
 	tx *sql.Tx,

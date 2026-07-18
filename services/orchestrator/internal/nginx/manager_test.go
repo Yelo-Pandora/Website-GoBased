@@ -35,7 +35,7 @@ func (d *dockerStub) Exec(_ context.Context, _ string, command []string) (string
 func TestApplyWritesAndReloadsFragment(t *testing.T) {
 	manager, docker := newTestManager(t)
 	err := manager.Apply(context.Background(), "lab-test", []Server{{
-		Host: "lab-test-app-1", Port: 8080, Weight: 100,
+		Name: "app-1", Host: "lab-test-app-1", Port: 8080, Weight: 100,
 	}})
 	if err != nil {
 		t.Fatalf("Apply() error = %v", err)
@@ -57,7 +57,7 @@ func TestApplyRestoresPreviousFragmentOnValidationFailure(t *testing.T) {
 	}
 	docker.failTest = true
 	err := manager.Apply(context.Background(), "lab-test", []Server{{
-		Host: "lab-test-app-1", Port: 8080, Weight: 100,
+		Name: "app-1", Host: "lab-test-app-1", Port: 8080, Weight: 100,
 	}})
 	if err == nil {
 		t.Fatal("Apply() error = nil; want validation failure")

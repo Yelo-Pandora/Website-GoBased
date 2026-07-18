@@ -23,6 +23,7 @@ type dockerExecutor interface {
 
 // Server is one validated Nginx upstream server.
 type Server struct {
+	Name   string
 	Host   string
 	Port   int
 	Weight int
@@ -73,7 +74,7 @@ func (m *Manager) Apply(ctx context.Context, labID string, servers []Server) err
 	}
 	validated := append([]Server(nil), servers...)
 	for _, server := range validated {
-		if !validHost(server.Host) || server.Port <= 0 || server.Port > 65535 || server.Weight <= 0 {
+		if !validInstanceName(server.Name) || !validHost(server.Host) || server.Port <= 0 || server.Port > 65535 || server.Weight <= 0 {
 			return errors.New("nginx upstream server is invalid")
 		}
 	}
@@ -128,6 +129,18 @@ func (m *Manager) Apply(ctx context.Context, labID string, servers []Server) err
 		return err
 	}
 	return nil
+}
+
+func validInstanceName(value string) bool {
+	if !strings.HasPrefix(value, "app-") || len(value) < 5 || len(value) > 16 {
+		return false
+	}
+	for _, character := range value[4:] {
+		if character < '0' || character > '9' {
+			return false
+		}
+	}
+	return true
 }
 
 // Remove removes one fragment and reloads Nginx, restoring it on failure.

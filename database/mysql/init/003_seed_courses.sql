@@ -46,9 +46,9 @@ INSERT INTO courses (
     'cache-failures',
     '缓存故障',
     'cache',
-    'active',
+    'theory',
     50,
-    '演示缓存穿透、击穿、雪崩和会话 Redis 重启。'
+    '讲解缓存穿透、击穿、雪崩、Redis 故障与常见保护思路。'
   ),
   (
     'database-read-write-splitting',

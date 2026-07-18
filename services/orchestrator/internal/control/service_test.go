@@ -392,6 +392,45 @@ func TestDestroyAcceptsLifecycleReasonMetadata(t *testing.T) {
 	}
 }
 
+func TestDeleteRedisIsIdempotentWhenContainerIsAbsent(t *testing.T) {
+	service, _, _, _ := newTestService(t)
+	response := service.Execute(context.Background(), protocol.Command{
+		CommandType: commandDeleteRedis,
+		CommandID:   "cmd-delete-redis", OperationID: "op-delete-redis",
+		LabID: "lab-abcdef12", RequestedBy: "1", Payload: []byte(`{}`),
+	})
+	if response.Status != "succeeded" {
+		t.Fatalf("Execute() = %#v", response)
+	}
+	result, ok := response.Result.(map[string]any)
+	if !ok || result["deleted"] != false {
+		t.Fatalf("result = %#v", response.Result)
+	}
+}
+
+func TestCreateRedisIsIdempotentWhenContainerExists(t *testing.T) {
+	service, docker, _, _ := newTestService(t)
+	docker.containers = []dockerapi.Resource{{
+		ID: "redis-existing", Name: "lab-abcdef12-redis",
+		Labels: map[string]string{
+			"platform.labId": "lab-abcdef12", "platform.resourceType": "session-redis",
+		},
+	}}
+	response := service.Execute(context.Background(), protocol.Command{
+		CommandType: commandCreateRedis,
+		CommandID: "cmd-create-redis", OperationID: "op-create-redis",
+		LabID: "lab-abcdef12", RequestedBy: "1",
+		Payload: []byte(`{"scenarioTemplateId":"multi_level_cache_scenario_v1"}`),
+	})
+	if response.Status != "succeeded" {
+		t.Fatalf("Execute() = %#v", response)
+	}
+	result, ok := response.Result.(map[string]any)
+	if !ok || result["containerId"] != "redis-existing" || len(docker.containers) != 1 {
+		t.Fatalf("result=%#v containers=%#v", response.Result, docker.containers)
+	}
+}
+
 func newTestService(
 	t *testing.T,
 ) (*Service, *dockerStub, *databaseStub, *nginxStub) {

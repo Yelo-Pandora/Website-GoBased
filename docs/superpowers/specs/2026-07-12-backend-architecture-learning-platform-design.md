@@ -370,7 +370,6 @@ flowchart TB
 * `application_data_separation_scenario_v1`
 * `application_cluster_scenario_v1`
 * `multi_level_cache_scenario_v1`
-* `cache_failures_scenario_v1`
 
 模板固定镜像摘要、资源限制、健康检查、环境变量白名单、挂载规则、标签和网络策略。
 
@@ -378,9 +377,9 @@ flowchart TB
 模板名称包含版本号，例如 `app_container_v1`；已经启动的实验始终使用创建时选定的版本，后续新增 `v2` 不得静默改变运行中的实验。
 MVP 不增加 `scenario_settings` 表，也不允许用户长期保存任意模板变体。
 
-三个课程场景模板分别复用普通应用容器或缓存应用容器；多级缓存和缓存故障模板额外引用
-`session_redis_v1`。模板当前只承载已实现的通用容量、批次和商品种子字段，缓存 TTL、
-失效广播和故障注入参数在阶段 9 通过兼容的运行时设计补充。
+三个实验场景模板分别复用普通应用容器或缓存应用容器；仅多级缓存模板额外引用
+`session_redis_v1`。缓存故障课程只保留理论内容。缓存 TTL、失效广播和受限层级控制
+由阶段 9 的兼容运行时设计补充。
 
 场景模板至少定义：
 

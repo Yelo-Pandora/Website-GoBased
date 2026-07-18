@@ -181,8 +181,7 @@ func validResult(
 	if !validStatus || !validLoadState {
 		return false
 	}
-	isCacheScenario := snapshot.Lab.ScenarioType == "multi_level_cache" ||
-		snapshot.Lab.ScenarioType == "cache_failures"
+	isCacheScenario := snapshot.Lab.ScenarioType == "multi_level_cache"
 	if isCacheScenario {
 		if !validCacheResult(request, result) {
 			return false
@@ -208,8 +207,7 @@ func validCacheResult(request protocol.TrafficBatchRequest, result protocol.Traf
 		return false
 	}
 	validResolvedBy := value.ResolvedBy == "l1" || value.ResolvedBy == "redis" ||
-		value.ResolvedBy == "mysql" || value.ResolvedBy == "negative_cache" ||
-		value.ResolvedBy == "bloom_filter" || value.ResolvedBy == "degraded"
+		value.ResolvedBy == "mysql" || value.ResolvedBy == "degraded"
 	if !validResolvedBy || (value.Outcome != "found" && value.Outcome != "not_found") {
 		return false
 	}
@@ -225,7 +223,7 @@ func validCacheResult(request protocol.TrafficBatchRequest, result protocol.Traf
 		if step.Layer != "l1" && step.Layer != "redis" && step.Layer != "mysql" {
 			return false
 		}
-		if step.Result != "hit" && step.Result != "miss" && step.Result != "not_found" &&
+		if step.Result != "hit" && step.Result != "miss" && step.Result != "disabled" && step.Result != "not_found" &&
 			step.Result != "unavailable" {
 			return false
 		}

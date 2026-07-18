@@ -739,33 +739,30 @@ SDS 明确要求以下字段：
 ["fixed", "adaptive"]
 ```
 
-重启会话 Redis：
+去除指定实例 L1：
 
 ```json
 {
   "operationId": "d6fc1554-788a-4e98-bd41-af5d1d6cb142",
-  "actionType": "RESTART_REDIS",
-  "targetInstanceId": null,
+	"actionType": "REMOVE_INSTANCE_L1",
+	"targetInstanceId": "app-2",
   "parameters": {}
 }
 ```
 
-设置缓存保护策略：
+重新添加会话 Redis：
 
 ```json
 {
   "operationId": "218ca489-e036-46e0-bb5b-92df9c1cf289",
-  "actionType": "SET_CACHE_PROTECTION",
+	"actionType": "ADD_SESSION_REDIS",
   "targetInstanceId": null,
-  "parameters": {
-    "scenario": "penetration",
-    "strategy": "null_cache",
-    "enabled": true
-  }
+	"parameters": {}
 }
 ```
 
-缓存场景、策略枚举和触发故障动作仍需单独固定。
+多级缓存只允许 `REMOVE_INSTANCE_L1`、`ADD_INSTANCE_L1`、
+`REMOVE_SESSION_REDIS` 和 `ADD_SESSION_REDIS`。缓存故障课程不提供实验动作。
 
 ### 7.4 `POST /api/v1/labs/:id/traffic-batches`
 

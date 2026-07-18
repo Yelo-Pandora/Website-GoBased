@@ -194,10 +194,42 @@ func (h *handler) getLab(ctx *gin.Context) {
 		h.writeLabError(ctx, err)
 		return
 	}
-	if h.cacheStates != nil && (snapshot.Lab.ScenarioType == "multi_level_cache" || snapshot.Lab.ScenarioType == "cache_failures") && snapshot.Lab.Status == lab.StatusRunning {
-		cacheState, cacheErr := h.cacheStates.CacheState(ctx.Request.Context(), snapshot.Lab.ID)
-		if cacheErr == nil {
-			snapshot.Cache = &cacheState
+	if h.cacheStates != nil && snapshot.Lab.ScenarioType == "multi_level_cache" && snapshot.Lab.Status == lab.StatusRunning {
+		var merged *protocol.CacheState
+		redisPresent := snapshot.Topology.Redis != nil && snapshot.Topology.Redis.Status != "deleted"
+		if redisPresent {
+			if cacheState, cacheErr := h.cacheStates.CacheState(ctx.Request.Context(), snapshot.Lab.ID); cacheErr == nil {
+				merged = &cacheState
+				merged.Instances = nil
+			}
+		}
+		for _, instance := range snapshot.Topology.Instances {
+			cacheState, cacheErr := h.cacheStates.InstanceCacheState(
+				ctx.Request.Context(), snapshot.Lab.ID, instance.ID,
+			)
+			if cacheErr != nil {
+				continue
+			}
+			if merged == nil {
+				merged = &cacheState
+				merged.Instances = nil
+			}
+			for _, state := range cacheState.Instances {
+				if state.InstanceID == instance.ID {
+					merged.Instances = append(merged.Instances, state)
+					break
+				}
+			}
+		}
+		if merged != nil {
+			if !redisPresent {
+				merged.Redis.Status = "absent"
+				merged.Redis.Entries = []protocol.CacheEntry{}
+			} else if merged.Redis.Status == "" {
+				merged.Redis.Status = "unavailable"
+				merged.Redis.Entries = []protocol.CacheEntry{}
+			}
+			snapshot.Cache = merged
 		}
 	}
 	ctx.JSON(http.StatusOK, gin.H{"data": snapshot})
@@ -307,8 +339,8 @@ func (h *handler) writeLabError(ctx *gin.Context, err error) {
 		status, code, message = http.StatusServiceUnavailable,
 			"RESOURCE_CAPACITY_EXCEEDED", "lab resource capacity is exhausted"
 	case errors.Is(err, lab.ErrLabUnavailable):
-		status, code, message = http.StatusServiceUnavailable,
-			"DOCKER_UNAVAILABLE", "lab resources are unavailable"
+		status, code, message = http.StatusUnprocessableEntity,
+			"LAB_UNAVAILABLE", "course does not provide a lab"
 	default:
 		h.logger.ErrorContext(ctx.Request.Context(), "complete lab request", "error", err)
 	}

@@ -47,6 +47,10 @@ const (
 	ActionSetInstancePerformance = "SET_INSTANCE_PERFORMANCE"
 	ActionSetInstanceWeights     = "SET_INSTANCE_WEIGHTS"
 	ActionSetBalancingMode       = "SET_BALANCING_MODE"
+	ActionRemoveInstanceL1       = "REMOVE_INSTANCE_L1"
+	ActionAddInstanceL1          = "ADD_INSTANCE_L1"
+	ActionRemoveSessionRedis     = "REMOVE_SESSION_REDIS"
+	ActionAddSessionRedis        = "ADD_SESSION_REDIS"
 )
 
 // InstanceWeight is one fixed Nginx weight selected by the learner.
@@ -260,6 +264,16 @@ type topologyActionRepository interface {
 	) (ActionResult, error)
 }
 
+type cacheActionRepository interface {
+	EnqueueCacheAction(
+		ctx context.Context,
+		userID uint64,
+		labID string,
+		input ActionInput,
+		now time.Time,
+	) (ActionResult, error)
+}
+
 type snapshotDecorator interface {
 	DecorateSnapshot(*Snapshot)
 }
@@ -274,6 +288,15 @@ func (s *Service) Action(
 	if userID == 0 || !validLabID(labID) || !validOperationID(input.OperationID) ||
 		!validActionInput(input) {
 		return ActionResult{}, ErrInvalidRequest
+	}
+	if isCacheAction(input.ActionType) {
+		repository, ok := s.repository.(cacheActionRepository)
+		if !ok {
+			return ActionResult{}, errors.New("lab repository does not support cache actions")
+		}
+		return repository.EnqueueCacheAction(
+			ctx, userID, labID, input, s.now().UTC().Truncate(time.Microsecond),
+		)
 	}
 	repository, ok := s.repository.(topologyActionRepository)
 	if !ok {
@@ -310,9 +333,20 @@ func validActionInput(input ActionInput) bool {
 		return input.TargetInstanceID == nil && input.PerformancePercent == nil &&
 			len(input.Weights) == 0 && input.BalancingMode != nil &&
 			(*input.BalancingMode == "fixed" || *input.BalancingMode == "adaptive")
+	case ActionRemoveInstanceL1, ActionAddInstanceL1:
+		return input.TargetInstanceID != nil && *input.TargetInstanceID != "" &&
+			input.PerformancePercent == nil && len(input.Weights) == 0 && input.BalancingMode == nil
+	case ActionRemoveSessionRedis, ActionAddSessionRedis:
+		return input.TargetInstanceID == nil && input.PerformancePercent == nil &&
+			len(input.Weights) == 0 && input.BalancingMode == nil
 	default:
 		return false
 	}
+}
+
+func isCacheAction(action string) bool {
+	return action == ActionRemoveInstanceL1 || action == ActionAddInstanceL1 ||
+		action == ActionRemoveSessionRedis || action == ActionAddSessionRedis
 }
 
 // Service applies lab session rules before using persistent storage.

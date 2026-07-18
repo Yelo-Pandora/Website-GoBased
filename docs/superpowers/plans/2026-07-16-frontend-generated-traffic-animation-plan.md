@@ -74,7 +74,7 @@ LAB_UNAVAILABLE
 - `services/platform-api/internal/app/config_test.go`：覆盖默认值、非法值和边界值。
 - `services/platform-api/internal/traffic/types.go`：定义平台内部批次请求、结果、错误和路径类型。
 - `contracts/http/platform-api.openapi.yaml`：保持已批准的公开请求和响应 Schema。
-- `configs/scenarios/*_scenario_v1.json`：确认请求量范围和容量窗口来源仍由场景模板提供；不新增未知字段，避免破坏严格模板解析。应用集群、应用与数据分离、多级缓存和缓存故障各自使用固定版本模板。
+- `configs/scenarios/*_scenario_v1.json`：确认请求量范围和容量窗口来源仍由场景模板提供；不新增未知字段，避免破坏严格模板解析。应用集群、应用与数据分离和多级缓存使用固定版本模板；缓存故障只保留理论课程，不再拥有实验模板。
 
 实现要点：
 

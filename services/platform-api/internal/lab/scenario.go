@@ -28,13 +28,6 @@ var scenariosByCourseSlug = map[string]scenario{
 		TemporaryContainers: 4,
 		RedisRequired:       true,
 	},
-	"cache-failures": {
-		Type:                "cache_failures",
-		TemplateID:          "cache_failures_scenario_v1",
-		InitialInstances:    3,
-		TemporaryContainers: 4,
-		RedisRequired:       true,
-	},
 }
 
 func scenarioForCourse(slug, status string) (scenario, bool) {

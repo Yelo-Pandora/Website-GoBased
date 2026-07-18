@@ -14,13 +14,42 @@ import (
 )
 
 type handler struct {
-	identity RuntimeIdentity
-	batches  batchProcessor
-	cache    cacheStateProvider
+	identity      RuntimeIdentity
+	batches       batchProcessor
+	cache         cacheStateProvider
+	instanceCache cacheInstanceStateProvider
+	controls      cacheControlProvider
 }
 
-func newHandler(identity RuntimeIdentity, batches batchProcessor, cache cacheStateProvider) *handler {
-	return &handler{identity: identity, batches: batches, cache: cache}
+func newHandler(
+	identity RuntimeIdentity,
+	batches batchProcessor,
+	cache cacheStateProvider,
+	instanceCache cacheInstanceStateProvider,
+	controls cacheControlProvider,
+) *handler {
+	return &handler{
+		identity: identity, batches: batches, cache: cache,
+		instanceCache: instanceCache, controls: controls,
+	}
+}
+
+func (h *handler) cacheAction(ctx *gin.Context) {
+	if h.controls == nil {
+		writeBatchError(ctx, http.StatusNotFound, "CACHE_NOT_AVAILABLE", "cache runtime is not available")
+		return
+	}
+	ctx.Request.Body = http.MaxBytesReader(ctx.Writer, ctx.Request.Body, 1024)
+	var request struct {
+		Action string `json:"action"`
+	}
+	if err := ctx.ShouldBindJSON(&request); err != nil ||
+		(request.Action != "add_l1" && request.Action != "remove_l1") {
+		writeBatchError(ctx, http.StatusBadRequest, "CACHE_ACTION_INVALID", "cache action is invalid")
+		return
+	}
+	state := h.controls.SetL1Enabled(request.Action == "add_l1")
+	ctx.JSON(http.StatusOK, gin.H{"data": gin.H{"instance": state}})
 }
 
 func (h *handler) submitBatch(ctx *gin.Context) {
@@ -84,6 +113,19 @@ func (h *handler) cacheState(ctx *gin.Context) {
 		return
 	}
 	state, err := h.cache.State(ctx.Request.Context())
+	if err != nil {
+		writeBatchError(ctx, http.StatusServiceUnavailable, "LAB_UNAVAILABLE", "cache state is unavailable")
+		return
+	}
+	ctx.JSON(http.StatusOK, gin.H{"data": gin.H{"cache": state}})
+}
+
+func (h *handler) cacheInstanceState(ctx *gin.Context) {
+	if h.instanceCache == nil {
+		writeBatchError(ctx, http.StatusNotFound, "CACHE_NOT_AVAILABLE", "cache runtime is not available")
+		return
+	}
+	state, err := h.instanceCache.InstanceState(ctx.Request.Context())
 	if err != nil {
 		writeBatchError(ctx, http.StatusServiceUnavailable, "LAB_UNAVAILABLE", "cache state is unavailable")
 		return

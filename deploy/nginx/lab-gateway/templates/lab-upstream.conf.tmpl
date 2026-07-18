@@ -9,6 +9,24 @@ server {
   listen 8080;
   server_name {{.LabID}}.lab.internal;
 
+{{range .Servers}}
+  location = /internal/instances/{{.Name}}/cache-state {
+    proxy_http_version 1.1;
+    proxy_set_header Host $host;
+    proxy_set_header X-Lab-ID {{$.LabID}};
+    proxy_set_header X-Request-ID $request_id;
+    proxy_pass http://{{.Host}}:{{.Port}}/internal/cache-instance-state;
+  }
+
+  location = /internal/instances/{{.Name}}/cache-actions {
+    proxy_http_version 1.1;
+    proxy_set_header Host $host;
+    proxy_set_header X-Lab-ID {{$.LabID}};
+    proxy_set_header X-Request-ID $request_id;
+    proxy_pass http://{{.Host}}:{{.Port}}/internal/cache-actions;
+  }
+{{end}}
+
   location / {
     proxy_http_version 1.1;
     proxy_set_header Host $host;

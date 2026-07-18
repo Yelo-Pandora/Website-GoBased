@@ -29,8 +29,8 @@ Nginx 片段。
 模板注册表从 `/opt/platform/configs` 读取固定 JSON 文件。
 解析时拒绝未知字段、重复 ID、循环继承、缺失引用和无效资源限制。
 当前场景模板包括 `application_data_separation_scenario_v1`、
-`application_cluster_scenario_v1`、`multi_level_cache_scenario_v1` 和
-`cache_failures_scenario_v1`；后两个场景额外引用实验 Redis 模板。
+`application_cluster_scenario_v1` 和 `multi_level_cache_scenario_v1`；仅多级缓存场景
+额外引用实验 Redis 模板。缓存故障课程为纯理论课程，不创建实验资源。
 阶段六的数据库核对使用 `platform.list_lab_database_resources` 存储过程，
 由数据库迁移脚本创建，编排器账号只获得数据库级 `EXECUTE` 权限。
 

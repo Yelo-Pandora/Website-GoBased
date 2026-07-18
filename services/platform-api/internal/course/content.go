@@ -60,7 +60,7 @@ func NewContentStore() *ContentStore {
 				RequestPath: []string{"lab-app-l1", "session-redis", "shared-mysql"},
 				KeyConcepts: []string{"cache-penetration", "cache-breakdown", "cache-avalanche", "redis-fallback"},
 			},
-			lab: labDefinition("cache_failures", 1, 3),
+			lab: Lab{Available: false},
 		},
 	}}
 }

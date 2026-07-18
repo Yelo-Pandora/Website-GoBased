@@ -101,6 +101,20 @@ func (s *queueStub) CompleteTopology(
 	return nil
 }
 
+func (s *queueStub) CompleteCache(
+	_ context.Context,
+	record Record,
+	resultValue CacheResult,
+	errorCode string,
+	_ string,
+	_ time.Time,
+) error {
+	s.completedCode = errorCode
+	s.completedResult = resultValue
+	s.completedAction = record.Action
+	return nil
+}
+
 func (s *queueStub) ValidateAdaptive(
 	_ context.Context,
 	_ Record,
@@ -124,6 +138,24 @@ type executorStub struct {
 	command  protocol.Command
 	response protocol.CommandResponse
 	err      error
+}
+
+type cacheRuntimeStub struct {
+	labID      string
+	instanceID string
+	enabled    bool
+}
+
+func (s *cacheRuntimeStub) SetL1(
+	_ context.Context,
+	labID string,
+	instanceID string,
+	enabled bool,
+) (protocol.CacheInstanceState, error) {
+	s.labID = labID
+	s.instanceID = instanceID
+	s.enabled = enabled
+	return protocol.CacheInstanceState{InstanceID: instanceID, Status: "live"}, nil
 }
 
 type sequenceExecutor struct {
@@ -478,6 +510,89 @@ func TestWorkerPersistsRejectedCommand(t *testing.T) {
 	}
 	if queue.completedCode != "COMMAND_NOT_IMPLEMENTED" {
 		t.Fatalf("completed code = %q", queue.completedCode)
+	}
+}
+
+func TestWorkerTargetsInstanceL1WithoutOrchestratorCommand(t *testing.T) {
+	queue := &queueStub{record: Record{
+		ID: 8, OperationID: "operation-l1", LabID: "lab-test", RequestedBy: 7,
+		Action: ActionRemoveInstanceL1,
+		Payload: json.RawMessage(`{
+			"scenarioTemplateId":"multi_level_cache_scenario_v1",
+			"request":{"targetInstanceId":"app-2"}
+		}`),
+	}}
+	executor := &executorStub{}
+	runtime := &cacheRuntimeStub{}
+	worker, err := newWorker(
+		slog.New(slog.NewTextHandler(io.Discard, nil)), queue, executor,
+		WorkerConfig{
+			Owner: "worker-1", PollInterval: time.Second,
+			LeaseDuration: time.Minute, CommandTimeout: 10 * time.Second,
+		},
+		runtime,
+	)
+	if err != nil {
+		t.Fatalf("newWorker() error = %v", err)
+	}
+	if _, err := worker.processOne(context.Background()); err != nil {
+		t.Fatalf("processOne() error = %v", err)
+	}
+	if runtime.labID != "lab-test" || runtime.instanceID != "app-2" || runtime.enabled ||
+		executor.command.CommandType != "" || queue.completedAction != ActionRemoveInstanceL1 {
+		t.Fatalf("runtime=%#v command=%#v queue=%#v", runtime, executor.command, queue)
+	}
+}
+
+func TestWorkerMapsRedisLayerActions(t *testing.T) {
+	tests := []struct {
+		name        string
+		action      string
+		commandType string
+		result      map[string]any
+	}{
+		{name: "remove", action: ActionRemoveSessionRedis, commandType: "DELETE_SESSION_REDIS", result: map[string]any{"deleted": true}},
+		{name: "add", action: ActionAddSessionRedis, commandType: "CREATE_SESSION_REDIS", result: map[string]any{
+			"containerId": "redis-1", "containerName": "lab-test-redis",
+		}},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			queue := &queueStub{record: Record{
+				ID: 9, OperationID: "operation-redis", LabID: "lab-test", RequestedBy: 7,
+				Action: test.action,
+				Payload: json.RawMessage(`{
+					"scenarioTemplateId":"multi_level_cache_scenario_v1",
+					"request":{}
+				}`),
+			}}
+			executor := &executorStub{response: protocol.CommandResponse{
+				Status: "succeeded", Result: test.result,
+			}}
+			worker, err := newWorker(
+				slog.New(slog.NewTextHandler(io.Discard, nil)), queue, executor,
+				WorkerConfig{
+					Owner: "worker-1", PollInterval: time.Second,
+					LeaseDuration: time.Minute, CommandTimeout: 10 * time.Second,
+				},
+			)
+			if err != nil {
+				t.Fatalf("newWorker() error = %v", err)
+			}
+			worker.newCommandID = func() (string, error) { return "command-redis", nil }
+			if _, err := worker.processOne(context.Background()); err != nil {
+				t.Fatalf("processOne() error = %v", err)
+			}
+			if executor.command.CommandType != test.commandType || queue.completedAction != test.action {
+				t.Fatalf("command=%#v queue=%#v", executor.command, queue)
+			}
+			if test.action == ActionAddSessionRedis {
+				result, ok := queue.completedResult.(CacheResult)
+				if !ok || result.Redis == nil || result.Redis.Status != "ready" {
+					t.Fatalf("cache result = %#v", queue.completedResult)
+				}
+			}
+		})
 	}
 }
 

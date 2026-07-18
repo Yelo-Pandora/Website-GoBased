@@ -51,6 +51,11 @@ func Run(ctx context.Context, cfg Config, logger *slog.Logger) error {
 		cfg.LabOrchestratorTimeout,
 	)
 	defer orchestratorClient.CloseIdleConnections()
+	cacheRuntimeClient, err := traffic.NewClient(cfg.LabGatewayAddr, cfg.TrafficRequestTimeout)
+	if err != nil {
+		return fmt.Errorf("configure cache runtime client: %w", err)
+	}
+	defer cacheRuntimeClient.CloseIdleConnections()
 	operationWorker, err := operation.NewWorker(
 		logger,
 		operation.NewRepository(database),
@@ -61,6 +66,7 @@ func Run(ctx context.Context, cfg Config, logger *slog.Logger) error {
 			LeaseDuration:  cfg.LabOperationLease,
 			CommandTimeout: cfg.LabOrchestratorTimeout,
 		},
+		cacheRuntimeClient,
 	)
 	if err != nil {
 		return fmt.Errorf("configure lab operation worker: %w", err)

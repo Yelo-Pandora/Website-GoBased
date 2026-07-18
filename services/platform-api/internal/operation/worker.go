@@ -60,6 +60,14 @@ type queue interface {
 		errorMessage string,
 		now time.Time,
 	) error
+	CompleteCache(
+		ctx context.Context,
+		record Record,
+		resultValue CacheResult,
+		errorCode string,
+		errorMessage string,
+		now time.Time,
+	) error
 	ValidateAdaptive(
 		ctx context.Context,
 		record Record,
@@ -81,6 +89,15 @@ type commandExecutor interface {
 	) (protocol.CommandResponse, error)
 }
 
+type cacheRuntimeClient interface {
+	SetL1(
+		ctx context.Context,
+		labID string,
+		instanceID string,
+		enabled bool,
+	) (protocol.CacheInstanceState, error)
+}
+
 // WorkerConfig controls queue polling and operation leases.
 type WorkerConfig struct {
 	Owner          string
@@ -97,6 +114,7 @@ type Worker struct {
 	config       WorkerConfig
 	now          func() time.Time
 	newCommandID func() (string, error)
+	cacheRuntime cacheRuntimeClient
 }
 
 // NewWorker returns a persistent operation queue worker.
@@ -105,8 +123,9 @@ func NewWorker(
 	queue *Repository,
 	executor commandExecutor,
 	config WorkerConfig,
+	cacheRuntimes ...cacheRuntimeClient,
 ) (*Worker, error) {
-	return newWorker(logger, queue, executor, config)
+	return newWorker(logger, queue, executor, config, cacheRuntimes...)
 }
 
 func newWorker(
@@ -114,6 +133,7 @@ func newWorker(
 	queue queue,
 	executor commandExecutor,
 	config WorkerConfig,
+	cacheRuntimes ...cacheRuntimeClient,
 ) (*Worker, error) {
 	if logger == nil || queue == nil || executor == nil {
 		return nil, errors.New("operation worker dependencies are required")
@@ -125,14 +145,18 @@ func newWorker(
 	if config.LeaseDuration <= config.CommandTimeout {
 		return nil, errors.New("operation lease duration must exceed command timeout")
 	}
-	return &Worker{
+	worker := &Worker{
 		logger:       logger,
 		queue:        queue,
 		executor:     executor,
 		config:       config,
 		now:          time.Now,
 		newCommandID: newCommandID,
-	}, nil
+	}
+	if len(cacheRuntimes) > 0 {
+		worker.cacheRuntime = cacheRuntimes[0]
+	}
+	return worker, nil
 }
 
 // Run drains available operations and waits until the context is canceled.
@@ -183,6 +207,9 @@ func (w *Worker) processOne(ctx context.Context) (bool, error) {
 	if isTopologyAction(record.Action) {
 		return true, w.processTopology(ctx, record)
 	}
+	if isCacheAction(record.Action) {
+		return true, w.processCache(ctx, record)
+	}
 	commandType, ok := commandTypeForAction(record.Action)
 	if !ok {
 		return true, w.queue.CompleteFailure(
@@ -230,6 +257,84 @@ func (w *Worker) processOne(ctx context.Context) (bool, error) {
 			"orchestrator did not return a final command result",
 		)
 	}
+}
+
+func isCacheAction(action string) bool {
+	return action == ActionRemoveInstanceL1 || action == ActionAddInstanceL1 ||
+		action == ActionRemoveSessionRedis || action == ActionAddSessionRedis
+}
+
+func (w *Worker) processCache(ctx context.Context, record Record) error {
+	var payload struct {
+		ScenarioTemplateID string `json:"scenarioTemplateId"`
+		Request            struct {
+			TargetInstanceID *string `json:"targetInstanceId"`
+		} `json:"request"`
+	}
+	if err := json.Unmarshal(record.Payload, &payload); err != nil || payload.ScenarioTemplateID == "" {
+		return w.completeCacheFailure(ctx, record, "INVALID_OPERATION", "cache operation payload is invalid")
+	}
+	if record.Action == ActionRemoveInstanceL1 || record.Action == ActionAddInstanceL1 {
+		if w.cacheRuntime == nil || payload.Request.TargetInstanceID == nil ||
+			*payload.Request.TargetInstanceID == "" {
+			return w.completeCacheFailure(ctx, record, "CACHE_UNAVAILABLE", "cache instance control is unavailable")
+		}
+		actionCtx, cancel := context.WithTimeout(ctx, w.config.CommandTimeout)
+		_, err := w.cacheRuntime.SetL1(
+			actionCtx, record.LabID, *payload.Request.TargetInstanceID,
+			record.Action == ActionAddInstanceL1,
+		)
+		cancel()
+		if err != nil {
+			return w.completeCacheFailure(ctx, record, "CACHE_UNAVAILABLE", "cache instance could not be updated")
+		}
+		return w.queue.CompleteCache(
+			ctx, record, CacheResult{}, "", "", w.now().UTC().Truncate(time.Microsecond),
+		)
+	}
+	commandID, err := w.newCommandID()
+	if err != nil {
+		return w.completeCacheFailure(ctx, record, "INTERNAL_ERROR", "cache command could not be prepared")
+	}
+	commandType := "DELETE_SESSION_REDIS"
+	commandPayload := json.RawMessage(`{}`)
+	if record.Action == ActionAddSessionRedis {
+		commandType = "CREATE_SESSION_REDIS"
+		commandPayload, _ = json.Marshal(map[string]string{"scenarioTemplateId": payload.ScenarioTemplateID})
+	}
+	commandCtx, cancel := context.WithTimeout(ctx, w.config.CommandTimeout)
+	response, err := w.executor.Execute(commandCtx, protocol.Command{
+		CommandType: commandType, CommandID: commandID, OperationID: record.OperationID,
+		LabID: record.LabID, RequestedBy: strconv.FormatUint(record.RequestedBy, 10),
+		Payload: commandPayload,
+	})
+	cancel()
+	if err != nil {
+		return w.completeCacheFailure(ctx, record, "ORCHESTRATOR_UNAVAILABLE", "Redis operation could not be completed")
+	}
+	if response.Status != "succeeded" {
+		code, message := commandError(response.Error)
+		return w.completeCacheFailure(ctx, record, code, message)
+	}
+	result := CacheResult{}
+	if record.Action == ActionAddSessionRedis {
+		body, _ := json.Marshal(response.Result)
+		var redisResult ProvisionRedis
+		if json.Unmarshal(body, &redisResult) != nil || redisResult.ContainerID == "" || redisResult.ContainerName == "" {
+			return w.completeCacheFailure(ctx, record, "ORCHESTRATOR_RESPONSE_INCOMPLETE", "Redis result is invalid")
+		}
+		redisResult.Status = "ready"
+		result.Redis = &redisResult
+	}
+	return w.queue.CompleteCache(
+		ctx, record, result, "", "", w.now().UTC().Truncate(time.Microsecond),
+	)
+}
+
+func (w *Worker) completeCacheFailure(ctx context.Context, record Record, code, message string) error {
+	return w.queue.CompleteCache(
+		ctx, record, CacheResult{}, code, message, w.now().UTC().Truncate(time.Microsecond),
+	)
 }
 
 type topologyServer struct {

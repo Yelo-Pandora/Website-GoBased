@@ -37,9 +37,11 @@ type Processor struct {
 	redis         *redisStore
 	config        Config
 	now           func() time.Time
-	mu            sync.Mutex
+	loadMu        sync.Mutex
+	cacheMu       sync.Mutex
 	currentLoad   float64
 	lastUpdatedAt time.Time
+	l1Enabled     bool
 }
 
 func NewProcessor(products productRepository, redisAddress string, config Config) (*Processor, error) {
@@ -52,7 +54,7 @@ func NewProcessor(products productRepository, redisAddress string, config Config
 		products: products,
 		l1:       NewL1Store(config.L1MaxEntries, config.L1TTL),
 		redis:    newRedisStore(redisAddress, config.LabID, config.L2TTL, config.L2JitterPercent),
-		config:   config, now: time.Now,
+		config:   config, now: time.Now, l1Enabled: true,
 	}, nil
 }
 
@@ -68,18 +70,28 @@ func (p *Processor) Process(ctx context.Context, request protocol.TrafficBatchRe
 		Trace: []protocol.CacheTraceStep{}, Deltas: []protocol.CacheDelta{},
 	}
 	resolvedBy := ""
-	productValue, hit := p.l1.Get(request.ProductID, now)
+	p.cacheMu.Lock()
+	l1Enabled := p.l1Enabled
+	productValue, hit := protocol.CacheProduct{}, false
+	if l1Enabled {
+		productValue, hit = p.l1.Get(request.ProductID, now)
+	}
+	p.cacheMu.Unlock()
 	if hit {
 		resolvedBy = "l1"
 		cacheResult.Trace = append(cacheResult.Trace, protocol.CacheTraceStep{Layer: "l1", Result: "hit"})
 	} else {
-		cacheResult.Trace = append(cacheResult.Trace, protocol.CacheTraceStep{Layer: "l1", Result: "miss"})
+		l1Result := "miss"
+		if !l1Enabled {
+			l1Result = "disabled"
+		}
+		cacheResult.Trace = append(cacheResult.Trace, protocol.CacheTraceStep{Layer: "l1", Result: l1Result})
 		redisProduct, redisHit, redisErr := p.redis.Get(ctx, request.ProductID)
 		if redisErr == nil && redisHit {
 			productValue = redisProduct
 			resolvedBy = "redis"
 			cacheResult.Trace = append(cacheResult.Trace, protocol.CacheTraceStep{Layer: "redis", Result: "hit"})
-			cacheResult.Deltas = append(cacheResult.Deltas, p.putL1(productValue, now, "redis_fill")...)
+			cacheResult.Deltas = append(cacheResult.Deltas, p.putL1IfEnabled(productValue, now, "redis_fill")...)
 		} else {
 			result := "miss"
 			if redisErr != nil {
@@ -106,7 +118,7 @@ func (p *Processor) Process(ctx context.Context, request protocol.TrafficBatchRe
 						Reason: "mysql_fill", Product: &productValue, ExpiresAt: &expiresAt,
 					})
 				}
-				cacheResult.Deltas = append(cacheResult.Deltas, p.putL1(productValue, now, "mysql_fill")...)
+				cacheResult.Deltas = append(cacheResult.Deltas, p.putL1IfEnabled(productValue, now, "mysql_fill")...)
 			}
 		}
 	}
@@ -134,13 +146,37 @@ func (p *Processor) putL1(value protocol.CacheProduct, now time.Time, reason str
 	return deltas
 }
 
+func (p *Processor) putL1IfEnabled(value protocol.CacheProduct, now time.Time, reason string) []protocol.CacheDelta {
+	p.cacheMu.Lock()
+	defer p.cacheMu.Unlock()
+	if !p.l1Enabled {
+		return nil
+	}
+	return p.putL1(value, now, reason)
+}
+
 func (p *Processor) report(ctx context.Context, now time.Time) {
 	reportCtx, cancel := context.WithTimeout(ctx, time.Second)
 	defer cancel()
+	instance := p.localInstanceState(now)
 	_ = p.redis.Report(reportCtx, protocol.CacheInstanceState{
-		InstanceID: p.config.InstanceID, Status: "live", ObservedAt: now,
-		Entries: p.l1.Snapshot(now),
+		InstanceID: instance.InstanceID, Status: instance.Status, ObservedAt: now,
+		Entries: instance.Entries,
 	})
+}
+
+func (p *Processor) localInstanceState(now time.Time) protocol.CacheInstanceState {
+	p.cacheMu.Lock()
+	defer p.cacheMu.Unlock()
+	status := "live"
+	entries := p.l1.Snapshot(now)
+	if !p.l1Enabled {
+		status = "disabled"
+		entries = []protocol.CacheEntry{}
+	}
+	return protocol.CacheInstanceState{
+		InstanceID: p.config.InstanceID, Status: status, ObservedAt: now, Entries: entries,
+	}
 }
 
 func (p *Processor) State(ctx context.Context) (protocol.CacheState, error) {
@@ -157,13 +193,42 @@ func (p *Processor) State(ctx context.Context) (protocol.CacheState, error) {
 	instances, redisState := p.redis.State(ctx, catalog, ids, now)
 	for index := range instances {
 		if instances[index].InstanceID == p.config.InstanceID {
-			instances[index] = protocol.CacheInstanceState{
-				InstanceID: p.config.InstanceID, Status: "live", ObservedAt: now,
-				Entries: p.l1.Snapshot(now),
-			}
+			instances[index] = p.localInstanceState(now)
 		}
 	}
 	return protocol.CacheState{Catalog: catalog, Instances: instances, Redis: redisState}, nil
+}
+
+func (p *Processor) InstanceState(ctx context.Context) (protocol.CacheState, error) {
+	now := p.now().UTC()
+	catalog, err := p.products.List(ctx)
+	if err != nil {
+		return protocol.CacheState{}, err
+	}
+	return protocol.CacheState{
+		Catalog:   catalog,
+		Instances: []protocol.CacheInstanceState{p.localInstanceState(now)},
+	}, nil
+}
+
+func (p *Processor) SetL1Enabled(enabled bool) protocol.CacheInstanceState {
+	now := p.now().UTC()
+	p.cacheMu.Lock()
+	defer p.cacheMu.Unlock()
+	already := p.l1Enabled == enabled
+	p.l1Enabled = enabled
+	if !enabled && !already {
+		p.l1.Clear()
+	}
+	status := "live"
+	entries := p.l1.Snapshot(now)
+	if !enabled {
+		status = "disabled"
+		entries = []protocol.CacheEntry{}
+	}
+	return protocol.CacheInstanceState{
+		InstanceID: p.config.InstanceID, Status: status, ObservedAt: now, Entries: entries,
+	}
 }
 
 func (p *Processor) latency(layer string) int {
@@ -180,8 +245,8 @@ func (p *Processor) latency(layer string) int {
 }
 
 func (p *Processor) allocate(request protocol.TrafficBatchRequest, now time.Time, cacheResult protocol.CacheResult) protocol.TrafficBatchResult {
-	p.mu.Lock()
-	defer p.mu.Unlock()
+	p.loadMu.Lock()
+	defer p.loadMu.Unlock()
 	elapsed := 0.0
 	if !p.lastUpdatedAt.IsZero() && now.After(p.lastUpdatedAt) {
 		elapsed = now.Sub(p.lastUpdatedAt).Seconds()

@@ -85,6 +85,18 @@ func (s *L1Store) Delete(productID uint64) bool {
 	return true
 }
 
+func (s *L1Store) Clear() []protocol.CacheProduct {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	values := make([]protocol.CacheProduct, 0, len(s.entries))
+	for element := s.recency.Front(); element != nil; element = element.Next() {
+		values = append(values, element.Value.(*l1Value).product)
+	}
+	s.entries = make(map[uint64]*list.Element, s.maximum)
+	s.recency.Init()
+	return values
+}
+
 func (s *L1Store) Snapshot(now time.Time) []protocol.CacheEntry {
 	s.mu.Lock()
 	defer s.mu.Unlock()

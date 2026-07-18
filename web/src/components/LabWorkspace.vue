@@ -34,8 +34,8 @@ const canReset = computed(() => ['Running', 'Expiring'].includes(props.snapshot?
 const canTerminate = computed(() => ['Preparing', 'Running', 'Expiring', 'Failed'].includes(props.snapshot?.lab?.status));
 const clusterRunning = computed(() => props.snapshot?.lab?.scenarioType === 'application_cluster' &&
   props.snapshot?.lab?.status === 'Running' && !props.busy);
-const cacheRunning = computed(() => ['multi_level_cache', 'cache_failures'].includes(props.snapshot?.lab?.scenarioType) &&
-  props.snapshot?.lab?.status === 'Running' && !props.busy);
+const cacheRunning = computed(() => props.snapshot?.lab?.scenarioType === 'multi_level_cache' &&
+	props.snapshot?.lab?.status === 'Running');
 
 const statusNames = {
   Preparing: '准备中',
@@ -125,13 +125,15 @@ const reasonNames = {
         :submit-batch="submitBatch"
       />
       <CacheStage
-        v-if="['multi_level_cache', 'cache_failures'].includes(snapshot.lab.scenarioType) && snapshot.topology.instances.length"
+		v-if="snapshot.lab.scenarioType === 'multi_level_cache' && snapshot.topology.instances.length"
         :key="`cache-${snapshot.lab.id}`"
         :instances="snapshot.topology.instances"
         :policy="snapshot.trafficPolicy"
         :cache-state="snapshot.cache"
         :running="cacheRunning"
         :submit-batch="submitBatch"
+		:busy="busy"
+		@action="$emit('action', $event)"
       />
       <ClusterControls
         v-if="snapshot.lab.scenarioType === 'application_cluster' && snapshot.topology.instances.length"

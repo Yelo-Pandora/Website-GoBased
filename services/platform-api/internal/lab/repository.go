@@ -771,7 +771,7 @@ func loadUsage(ctx context.Context, tx *sql.Tx) (Usage, error) {
 			COUNT(*),
 			COALESCE(SUM(
 				CASE
-					WHEN scenario_type IN ('multi_level_cache', 'cache_failures')
+					WHEN scenario_type = 'multi_level_cache'
 						THEN 4
 					ELSE 1
 				END

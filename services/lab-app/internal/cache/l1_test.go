@@ -38,6 +38,18 @@ func TestL1StoreExpiresWithoutRefreshingTTLOnHit(t *testing.T) {
 	}
 }
 
+func TestL1StoreClearRemovesAllEntries(t *testing.T) {
+	t.Parallel()
+	now := time.Date(2026, 7, 18, 10, 0, 0, 0, time.UTC)
+	store := NewL1Store(9, 15*time.Second)
+	store.Put(cacheProduct(1), now)
+	store.Put(cacheProduct(2), now)
+	removed := store.Clear()
+	if len(removed) != 2 || len(store.Snapshot(now)) != 0 {
+		t.Fatalf("removed=%#v snapshot=%#v", removed, store.Snapshot(now))
+	}
+}
+
 func cacheProduct(id uint64) protocol.CacheProduct {
 	return protocol.CacheProduct{ID: id, Name: "product", Category: "test", Version: 1}
 }

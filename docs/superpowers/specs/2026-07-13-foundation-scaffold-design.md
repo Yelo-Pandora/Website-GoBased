@@ -119,8 +119,7 @@ Website-GoBased/
 ├─ configs/
 │  ├─ scenarios/application_data_separation_scenario_v1.json
 │  ├─ scenarios/application_cluster_scenario_v1.json
-│  ├─ scenarios/multi_level_cache_scenario_v1.json
-│  └─ scenarios/cache_failures_scenario_v1.json
+│  └─ scenarios/multi_level_cache_scenario_v1.json
 │  └─ resources/
 │     ├─ app_container_v1.json
 │     ├─ cache_app_container_v1.json

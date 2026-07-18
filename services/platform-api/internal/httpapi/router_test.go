@@ -366,6 +366,7 @@ func TestCreateLabMapsStableErrors(t *testing.T) {
 	}{
 		{name: "course missing", err: lab.ErrCourseNotFound, wantStatus: http.StatusNotFound, wantCode: "COURSE_NOT_FOUND"},
 		{name: "active lab", err: lab.ErrAlreadyActive, wantStatus: http.StatusConflict, wantCode: "LAB_ALREADY_ACTIVE"},
+		{name: "lab unavailable", err: lab.ErrLabUnavailable, wantStatus: http.StatusUnprocessableEntity, wantCode: "LAB_UNAVAILABLE"},
 		{name: "busy", err: lab.ErrBusy, wantStatus: http.StatusConflict, wantCode: "LAB_BUSY"},
 		{name: "capacity", err: lab.ErrCapacityExceeded, wantStatus: http.StatusServiceUnavailable, wantCode: "RESOURCE_CAPACITY_EXCEEDED"},
 	}

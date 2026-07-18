@@ -38,7 +38,7 @@ func Run(ctx context.Context, cfg Config, logger *slog.Logger) error {
 		Process(context.Context, protocol.TrafficBatchRequest) (protocol.TrafficBatchResult, error)
 	}
 	var closeProcessor func() error
-	if cfg.ScenarioType == "multi_level_cache" || cfg.ScenarioType == "cache_failures" {
+	if cfg.ScenarioType == "multi_level_cache" {
 		cacheProcessor, cacheErr := cacheprocessor.NewProcessor(
 			productRepository,
 			cfg.RedisAddr,

@@ -95,7 +95,6 @@ func TestLoadConfiguredScenarioTemplates(t *testing.T) {
 		"application_data_separation_scenario_v1",
 		"application_cluster_scenario_v1",
 		"multi_level_cache_scenario_v1",
-		"cache_failures_scenario_v1",
 	} {
 		value, ok := registry.Scenario(id)
 		if !ok {
@@ -106,7 +105,7 @@ func TestLoadConfiguredScenarioTemplates(t *testing.T) {
 			t.Fatalf("scenario %q has incomplete resource references: %#v", id, value.ResourceTemplates)
 		}
 	}
-	for _, id := range []string{"multi_level_cache_scenario_v1", "cache_failures_scenario_v1"} {
+	for _, id := range []string{"multi_level_cache_scenario_v1"} {
 		value, _ := registry.Scenario(id)
 		if value.ResourceTemplates.Redis != "session_redis_v1" {
 			t.Fatalf("scenario %q Redis template = %q; want session_redis_v1", id, value.ResourceTemplates.Redis)

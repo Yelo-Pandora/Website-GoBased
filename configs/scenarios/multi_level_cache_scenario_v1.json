@@ -34,15 +34,13 @@
     "l1MaxProductEntries": 9,
     "l1TtlMs": 15000,
     "l2TtlMs": 30000,
-    "l2TtlJitterPercent": 20,
-    "simulatedLatencyMs": {
-      "l1": 120,
-      "redis": 320,
-      "mysql": 800,
-      "negativeCache": 160,
-      "bloomFilter": 80,
-      "degraded": 500
-    }
+      "l2TtlJitterPercent": 20,
+      "simulatedLatencyMs": {
+        "l1": 120,
+        "redis": 320,
+        "mysql": 800,
+        "degraded": 500
+      }
   },
   "orderSimulation": {
     "defaultBatchSize": 10,

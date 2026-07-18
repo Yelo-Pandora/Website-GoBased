@@ -49,6 +49,7 @@ func (p upstreamPayload) nginxServers(names resourceNames) ([]nginx.Server, erro
 			return nil, errInvalidUpstream
 		}
 		servers = append(servers, nginx.Server{
+			Name: server.InstanceName,
 			Host: names.appContainer(server.InstanceName), Port: 8080, Weight: server.Weight,
 		})
 	}

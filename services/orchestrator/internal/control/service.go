@@ -317,7 +317,7 @@ func (s *Service) provision(
 			"currentWeight": scenario.LoadBalancing.InitialWeight,
 		})
 		servers = append(servers, nginx.Server{
-			Host: names.appContainer(instanceName), Port: 8080,
+			Name: instanceName, Host: names.appContainer(instanceName), Port: 8080,
 			Weight: scenario.LoadBalancing.InitialWeight,
 		})
 	}
@@ -533,6 +533,11 @@ func (s *Service) createRedisCommand(
 	if err != nil {
 		return nil, reject("INVALID_COMMAND", "lab identity is invalid", err)
 	}
+	if existing, findErr := s.findResourceType(ctx, command.LabID, "session-redis"); findErr == nil {
+		return map[string]any{"containerId": existing.ID, "containerName": existing.Name}, nil
+	} else if !errors.Is(findErr, errResourceNotFound) {
+		return nil, fail("DOCKER_UNAVAILABLE", "session Redis could not be inspected", findErr)
+	}
 	container, err := s.ensureRedis(ctx, command, scenario, names)
 	if err != nil {
 		return nil, fail("DOCKER_UNAVAILABLE", "session Redis could not be created", err)
@@ -559,6 +564,9 @@ func (s *Service) deleteRedis(ctx context.Context, command protocol.Command) (an
 		return nil, reject("INVALID_COMMAND", "delete Redis does not accept parameters", err)
 	}
 	resource, err := s.findResourceType(ctx, command.LabID, "session-redis")
+	if errors.Is(err, errResourceNotFound) {
+		return map[string]any{"deleted": false}, nil
+	}
 	if err != nil {
 		return nil, fail("REDIS_NOT_FOUND", "session Redis was not found", err)
 	}
@@ -965,8 +973,10 @@ func (s *Service) findResourceType(
 			return resource, nil
 		}
 	}
-	return dockerapi.Resource{}, errors.New("resource not found")
+	return dockerapi.Resource{}, errResourceNotFound
 }
+
+var errResourceNotFound = errors.New("resource not found")
 
 func (s *Service) imageFor(environmentName string) (string, error) {
 	switch environmentName {

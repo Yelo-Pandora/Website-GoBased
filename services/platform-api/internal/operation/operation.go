@@ -34,7 +34,15 @@ const (
 	ActionSetInstanceWeights     = "SET_INSTANCE_WEIGHTS"
 	ActionSetBalancingMode       = "SET_BALANCING_MODE"
 	ActionApplyAdaptiveWeights   = balancer.ActionApplyWeights
+	ActionRemoveInstanceL1       = lab.ActionRemoveInstanceL1
+	ActionAddInstanceL1          = lab.ActionAddInstanceL1
+	ActionRemoveSessionRedis     = lab.ActionRemoveSessionRedis
+	ActionAddSessionRedis        = lab.ActionAddSessionRedis
 )
+
+type CacheResult struct {
+	Redis *ProvisionRedis `json:"redis,omitempty"`
+}
 
 // TopologyResult is the normalized result of one stage-seven topology action.
 type TopologyResult struct {

@@ -4,7 +4,9 @@ import {
   Database,
   Gauge,
   Layers3,
+	MinusCircle,
   Play,
+	PlusCircle,
   RotateCcw,
   Send,
   Server,
@@ -18,7 +20,10 @@ const props = defineProps({
   cacheState: {type: Object, default: null},
   running: Boolean,
   submitBatch: {type: Function, required: true},
+	busy: Boolean,
 });
+
+const emit = defineEmits(['action']);
 
 const requestUnits = ref(Number(props.policy?.requestUnits?.default || 10));
 const generationInterval = ref(Number(props.policy?.generationIntervalMs?.default || 250));
@@ -32,7 +37,7 @@ const sequence = ref([]);
 const sequenceIndex = ref(0);
 const lastError = ref('');
 const displayNow = ref(Date.now());
-const totals = ref({http: 0, actual: 0, equivalent: 0, l1: 0, redis: 0, mysql: 0, degraded: 0});
+const totals = ref({http: 0, actual: 0, equivalent: 0, l1: 0, redis: 0, mysql: 0, degraded: 0, l1Disabled: 0, redisUnavailable: 0});
 
 let generationTimer = null;
 let clockTimer = null;
@@ -95,6 +100,29 @@ function flightStyle(flight) {
   };
 }
 
+function l1State(instanceId) {
+	return l1Instances.value.find((item) => item.instanceId === instanceId) ||
+		{instanceId, status: 'stale', entries: []};
+}
+
+function toggleL1(instance) {
+	const disabled = instance.status === 'disabled';
+	emit('action', {
+		actionType: disabled ? 'ADD_INSTANCE_L1' : 'REMOVE_INSTANCE_L1',
+		targetInstanceId: instance.instanceId,
+		parameters: {},
+	});
+}
+
+function toggleRedis() {
+	const absent = redisState.value.status === 'absent';
+	emit('action', {
+		actionType: absent ? 'ADD_SESSION_REDIS' : 'REMOVE_SESSION_REDIS',
+		targetInstanceId: null,
+		parameters: {},
+	});
+}
+
 function applyDeltas(result) {
   const observedAt = result.cache?.observedAt || result.occurredAt;
   for (const delta of result.cache?.deltas || []) {
@@ -142,6 +170,8 @@ async function submitOneBatch() {
     totals.value.actual += Number(result.cache.actualLookupCount || 0);
     const layer = result.cache.resolvedBy;
     if (Object.hasOwn(totals.value, layer)) totals.value[layer] += 1;
+		if (result.cache.trace.some((step) => step.layer === 'l1' && step.result === 'disabled')) totals.value.l1Disabled += 1;
+		if (result.cache.trace.some((step) => step.layer === 'redis' && step.result === 'unavailable')) totals.value.redisUnavailable += 1;
     applyDeltas(result);
     const flight = {
       id: batchId,
@@ -186,7 +216,7 @@ function categoryLabel(value) {
 }
 
 function resetView() {
-  totals.value = {http: 0, actual: 0, equivalent: 0, l1: 0, redis: 0, mysql: 0, degraded: 0};
+  totals.value = {http: 0, actual: 0, equivalent: 0, l1: 0, redis: 0, mysql: 0, degraded: 0, l1Disabled: 0, redisUnavailable: 0};
   flights.value = [];
 }
 
@@ -221,8 +251,8 @@ onBeforeUnmount(() => {
       <article class="cache-node cache-node--source"><Waypoints :size="20" /><strong>请求流</strong><small>HTTP 批次</small></article>
       <article class="cache-node cache-node--gateway"><Gauge :size="20" /><strong>Nginx</strong><small>固定等权</small></article>
       <div class="cache-app-stack">
-        <article v-for="instance in instances" :key="instance.instanceId" class="cache-node cache-node--app">
-          <Server :size="18" /><span><strong>{{ instance.instanceName }}</strong><small>L1 · 9 项</small></span>
+        <article v-for="instance in instances" :key="instance.instanceId" class="cache-node cache-node--app" :data-l1="l1State(instance.instanceId).status">
+          <Server :size="18" /><span><strong>{{ instance.instanceName }}</strong><small>{{ l1State(instance.instanceId).status === 'disabled' ? 'L1 已去除' : 'L1 · 9 项' }}</small></span>
         </article>
       </div>
       <article class="cache-node cache-node--redis" :data-status="redisState.status"><Database :size="20" /><strong>Redis L2</strong><small>共享缓存</small></article>
@@ -233,16 +263,17 @@ onBeforeUnmount(() => {
     <div class="cache-metrics">
       <span>HTTP <strong>{{ totals.http }}</strong></span><span>真实查询 <strong>{{ totals.actual }}</strong></span><span>教学等效 <strong>{{ totals.equivalent }}</strong></span>
       <span class="cache-hit cache-hit--l1">L1 <strong>{{ totals.l1 }}</strong></span><span class="cache-hit cache-hit--redis">Redis <strong>{{ totals.redis }}</strong></span><span class="cache-hit cache-hit--mysql">MySQL <strong>{{ totals.mysql }}</strong></span>
+		<span>L1 已跳过 <strong>{{ totals.l1Disabled }}</strong></span><span>Redis 不可用 <strong>{{ totals.redisUnavailable }}</strong></span>
       <span v-if="lastError" class="traffic-error">{{ lastError }}</span>
     </div>
 
     <div class="cache-inventories">
-      <article v-for="instance in l1Instances" :key="instance.instanceId" class="cache-inventory">
-        <header><span><Server :size="17" /><strong>{{ instance.instanceId }} L1</strong></span><small>{{ instance.entries.length }}/9 · {{ instance.status }}</small></header>
+      <article v-for="instance in l1Instances" :key="instance.instanceId" class="cache-inventory" :data-status="instance.status">
+        <header><span><Server :size="17" /><strong>{{ instance.instanceId }} L1</strong></span><span class="cache-inventory__actions"><small>{{ instance.status === 'disabled' ? '0/0 · 已去除' : `${instance.entries.length}/9 · ${instance.status}` }}</small><button class="button button--compact" type="button" :disabled="busy || !running" @click="toggleL1(instance)"><PlusCircle v-if="instance.status === 'disabled'" :size="14" /><MinusCircle v-else :size="14" />{{ instance.status === 'disabled' ? '添加 L1' : '去除 L1' }}</button></span></header>
         <div class="cache-entry-grid"><span v-for="entry in instance.entries" :key="entry.product.id" class="cache-entry" :data-category="entry.product.category"><b>#{{ entry.product.id }}</b><em>{{ categoryLabel(entry.product.category) }}</em><small>v{{ entry.product.version }} · {{ ttlSeconds(entry) }}s</small></span><small v-if="!instance.entries.length" class="cache-empty">空</small></div>
       </article>
-      <article class="cache-inventory cache-inventory--redis">
-        <header><span><Database :size="17" /><strong>共享 Redis L2</strong></span><small>{{ redisEntries.length }}/{{ catalog.length }} · {{ redisState.status }}</small></header>
+      <article class="cache-inventory cache-inventory--redis" :data-status="redisState.status">
+        <header><span><Database :size="17" /><strong>共享 Redis L2</strong></span><span class="cache-inventory__actions"><small>{{ redisState.status === 'absent' ? '0/0 · 未部署' : `${redisEntries.length}/${catalog.length} · ${redisState.status}` }}</small><button class="button button--compact" type="button" :disabled="busy || !running" @click="toggleRedis"><PlusCircle v-if="redisState.status === 'absent'" :size="14" /><MinusCircle v-else :size="14" />{{ redisState.status === 'absent' ? '添加 Redis' : '去除 Redis' }}</button></span></header>
         <div class="cache-entry-grid"><span v-for="entry in redisEntries" :key="entry.product.id" class="cache-entry" :data-category="entry.product.category"><b>#{{ entry.product.id }}</b><em>{{ categoryLabel(entry.product.category) }}</em><small>v{{ entry.product.version }} · {{ ttlSeconds(entry) }}s</small></span><small v-if="!redisEntries.length" class="cache-empty">空</small></div>
       </article>
     </div>
