@@ -8,10 +8,12 @@ const workspaceRoot = path.resolve(import.meta.dirname, '..', '..');
 
 async function login(page) {
   await page.goto('/');
+  await expect(page.getByRole('heading', {name: /从理论到真实资源/})).toBeVisible();
+  await page.getByRole('button', {name: '登录实验', exact: true}).click();
   await page.getByLabel('账号').fill('learner');
   await page.getByLabel('密码').fill('example-password');
   await page.getByRole('button', {name: '登录', exact: true}).click();
-  await expect(page.getByText('课程目录', {exact: true})).toBeVisible();
+  await expect(page.getByRole('button', {name: '退出登录'})).toBeVisible();
 }
 
 async function selectLabCourse(page, name) {
@@ -22,7 +24,12 @@ async function selectLabCourse(page, name) {
 }
 
 async function terminateActiveLab(page) {
-  const terminate = page.getByRole('button', {name: '结束', exact: true});
+  let terminate = page.getByRole('button', {name: '结束', exact: true});
+  if (await terminate.count() === 0 && await page.locator('.course-item:disabled').count() > 0) {
+    await page.locator('.course-item:not(.course-item--introduction):not(:disabled)').click();
+    await page.getByRole('tab', {name: '实验'}).click();
+    terminate = page.getByRole('button', {name: '结束', exact: true});
+  }
   if (await terminate.count() > 0 && await terminate.isEnabled()) {
     page.once('dialog', (dialog) => dialog.accept());
     await terminate.click();
@@ -38,6 +45,79 @@ async function currentSnapshot(page) {
     return body.data;
   }, labId);
 }
+
+test('guest reads public theory and logs in through the experiment dialog', async ({page}) => {
+  await page.goto('/');
+
+  await expect(page.getByRole('heading', {name: /从理论到真实资源/})).toBeVisible();
+  await expect(page.getByRole('button', {name: /网站介绍/})).toHaveClass(/course-item--selected/);
+
+  await page.getByRole('button', {name: '登录实验', exact: true}).click();
+  await expect(page.getByRole('dialog', {name: '登录实验环境'})).toBeVisible();
+  await page.keyboard.press('Escape');
+  await expect(page.getByRole('dialog', {name: '登录实验环境'})).toHaveCount(0);
+
+  await page.getByRole('button', {name: /单机架构/}).click();
+  await expect(page.locator('.markdown-body').getByRole('heading', {name: '单机架构'})).toBeVisible();
+  await expect(page.getByRole('region', {name: '单机架构请求与资源边界'})).toBeVisible();
+
+  await page.getByRole('button', {name: /应用集群与负载均衡/}).click();
+  await page.getByRole('tab', {name: '实验'}).click();
+  const dialog = page.getByRole('dialog', {name: '登录实验环境'});
+  await expect(dialog).toBeVisible();
+  await dialog.getByLabel('账号').fill('learner');
+  await dialog.getByLabel('密码').fill('example-password');
+  await dialog.getByRole('button', {name: '登录', exact: true}).click();
+  await expect(dialog).toHaveCount(0);
+  await expect(page.getByRole('heading', {name: '应用集群与负载均衡'})).toBeVisible();
+  await expect(page.getByRole('button', {name: /创建实验|新建实验/})).toBeVisible();
+
+  await page.getByRole('tab', {name: '课程'}).click();
+  await page.getByRole('button', {name: '退出登录'}).click();
+  await expect(page.getByRole('button', {name: '登录实验', exact: true})).toBeVisible();
+  await expect(page.locator('.markdown-body').getByRole('heading', {name: '应用集群与负载均衡'})).toBeVisible();
+});
+
+test('public learning remains usable at a mobile viewport', async ({page}) => {
+  await page.setViewportSize({width: 390, height: 844});
+  await page.goto('/');
+  await expect(page.getByRole('heading', {name: /从理论到真实资源/})).toBeVisible();
+
+  const expectNoHorizontalOverflow = async () => {
+    const dimensions = await page.evaluate(() => ({
+      clientWidth: document.documentElement.clientWidth,
+      scrollWidth: document.documentElement.scrollWidth,
+    }));
+    expect(dimensions.scrollWidth).toBeLessThanOrEqual(dimensions.clientWidth);
+  };
+
+  await expectNoHorizontalOverflow();
+  if (process.env.PLAYWRIGHT_SCREENSHOT_DIR) {
+    await page.screenshot({
+      path: `${process.env.PLAYWRIGHT_SCREENSHOT_DIR}/site-introduction-mobile.png`,
+      fullPage: true,
+    });
+  }
+  await page.getByRole('button', {name: '登录实验', exact: true}).click();
+  await expect(page.getByRole('dialog', {name: '登录实验环境'})).toBeVisible();
+  await expectNoHorizontalOverflow();
+  if (process.env.PLAYWRIGHT_SCREENSHOT_DIR) {
+    await page.screenshot({
+      path: `${process.env.PLAYWRIGHT_SCREENSHOT_DIR}/login-dialog-mobile.png`,
+    });
+  }
+  await page.getByRole('button', {name: '关闭登录'}).click();
+
+  await page.getByRole('button', {name: /单机架构/}).click();
+  await expect(page.getByRole('region', {name: '单机架构请求与资源边界'})).toBeVisible();
+  await expectNoHorizontalOverflow();
+  if (process.env.PLAYWRIGHT_SCREENSHOT_DIR) {
+    await page.screenshot({
+      path: `${process.env.PLAYWRIGHT_SCREENSHOT_DIR}/public-learning-mobile.png`,
+      fullPage: true,
+    });
+  }
+});
 
 test('learner completes the stage 4-6 lab lifecycle', async ({page}) => {
   await login(page);

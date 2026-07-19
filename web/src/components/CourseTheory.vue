@@ -3,6 +3,7 @@ import {AlertTriangle, BookOpen, RefreshCw} from '@lucide/vue';
 import {computed} from 'vue';
 
 import {renderCourseMarkdown} from '../features/course/render-course-markdown.js';
+import StandaloneArchitectureDiagram from './StandaloneArchitectureDiagram.vue';
 
 const props = defineProps({
   course: Object,
@@ -43,6 +44,9 @@ const renderedContent = computed(() => renderCourseMarkdown(props.detail?.conten
     </section>
 
     <article v-else-if="detail" class="markdown-body" v-html="renderedContent"></article>
+    <StandaloneArchitectureDiagram
+      v-if="detail?.slug === 'standalone-architecture'"
+    />
 
     <section v-else class="course-message">
       <BookOpen :size="24" />

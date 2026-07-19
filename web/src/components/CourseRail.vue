@@ -1,13 +1,13 @@
 <script setup>
-import {BookOpen, CheckCircle2, Clock3, LockKeyhole} from '@lucide/vue';
+import {BookOpen, CheckCircle2, Clock3, Info, LockKeyhole} from '@lucide/vue';
 
 defineProps({
   courses: {type: Array, default: () => []},
-  selectedCourseId: Number,
+  selectedKey: {type: [Number, String], default: 'introduction'},
   activeCourseId: Number,
 });
 
-defineEmits(['select']);
+defineEmits(['select', 'select-introduction']);
 </script>
 
 <template>
@@ -18,10 +18,22 @@ defineEmits(['select']);
     </div>
     <nav class="course-list">
       <button
+        class="course-item course-item--introduction"
+        :class="{'course-item--selected': selectedKey === 'introduction'}"
+        type="button"
+        @click="$emit('select-introduction')"
+      >
+        <span class="course-item__icon"><Info :size="17" /></span>
+        <span class="course-item__copy">
+          <strong>网站介绍</strong>
+          <small>平台用途与学习路线</small>
+        </span>
+      </button>
+      <button
         v-for="course in courses"
         :key="course.id"
         class="course-item"
-        :class="{'course-item--selected': course.id === selectedCourseId}"
+        :class="{'course-item--selected': course.id === selectedKey}"
         :disabled="Boolean(activeCourseId && activeCourseId !== course.id)"
         type="button"
         @click="$emit('select', course)"

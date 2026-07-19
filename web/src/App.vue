@@ -1,5 +1,5 @@
 <script setup>
-import {BookOpen, FlaskConical, LoaderCircle, LogOut, ServerCog, UserRound} from '@lucide/vue';
+import {BookOpen, FlaskConical, LoaderCircle, LogIn, LogOut, ServerCog, UserRound} from '@lucide/vue';
 import {computed, onBeforeUnmount, onMounted, ref, watch} from 'vue';
 
 import {
@@ -19,10 +19,12 @@ import {
 import CourseRail from './components/CourseRail.vue';
 import CourseTheory from './components/CourseTheory.vue';
 import LabWorkspace from './components/LabWorkspace.vue';
-import LoginPanel from './components/LoginPanel.vue';
+import LoginDialog from './components/LoginDialog.vue';
+import SiteIntroduction from './components/SiteIntroduction.vue';
 
 const activeStatuses = new Set(['Preparing', 'Running', 'Expiring', 'Terminating']);
 const busyOperationStatuses = new Set(['pending', 'claimed', 'running', 'compensating']);
+const introductionKey = 'introduction';
 
 const courseMode = ref('course');
 const bootstrapping = ref(true);
@@ -30,12 +32,15 @@ const authBusy = ref(false);
 const requestBusy = ref(false);
 const snapshotLoading = ref(false);
 const courseDetailLoading = ref(false);
+const loginOpen = ref(false);
+const loginIntent = ref('header');
 const user = ref(null);
 const courses = ref([]);
-const selectedCourseId = ref(null);
+const selectedKey = ref(introductionKey);
 const courseDetail = ref(null);
 const snapshot = ref(null);
 const error = ref(null);
+const loginError = ref(null);
 const courseDetailError = ref(null);
 const now = ref(Date.now());
 
@@ -44,7 +49,7 @@ let clockTimer = null;
 let courseRequestId = 0;
 
 const selectedCourse = computed(() =>
-  courses.value.find((course) => course.id === selectedCourseId.value) || courses.value[0] || null,
+  courses.value.find((course) => course.id === selectedKey.value) || null,
 );
 const activeCourseId = computed(() =>
   activeStatuses.has(snapshot.value?.lab?.status) ? snapshot.value.lab.courseId : null,
@@ -110,8 +115,8 @@ function schedulePoll() {
 
 async function loadCourseCatalog() {
   courses.value = await listCourses();
-  if (!selectedCourseId.value) {
-    selectedCourseId.value = courses.value[0]?.id || null;
+  if (selectedKey.value !== introductionKey && !selectedCourse.value) {
+    selectedKey.value = introductionKey;
   }
 }
 
@@ -136,7 +141,7 @@ async function loadCourseDetail(course = selectedCourse.value) {
   }
 }
 
-async function restoreLab() {
+async function restoreLab({activate = true} = {}) {
   const candidates = [];
   const remembered = storageKey() ? localStorage.getItem(storageKey()) : '';
   if (remembered) candidates.push(remembered);
@@ -150,8 +155,10 @@ async function restoreLab() {
       const restored = await getLab(labId);
       if (activeStatuses.has(restored.lab.status)) {
         snapshot.value = restored;
-        selectedCourseId.value = restored.lab.courseId;
-        courseMode.value = 'lab';
+        if (activate) {
+          selectedKey.value = restored.lab.courseId;
+          courseMode.value = 'lab';
+        }
         rememberLab(labId);
         schedulePoll();
         return true;
@@ -163,47 +170,87 @@ async function restoreLab() {
   }
   snapshot.value = terminalSnapshot;
   if (terminalSnapshot) {
-    selectedCourseId.value = terminalSnapshot.lab.courseId;
     rememberLab(terminalSnapshot.lab.id);
   } else {
     rememberLab('');
   }
-  courseMode.value = 'course';
   return false;
 }
 
 async function restoreSession() {
   bootstrapping.value = true;
+  error.value = null;
   try {
-    const auth = await currentUser();
-    user.value = auth.user;
+    try {
+      const auth = await currentUser();
+      user.value = auth.user;
+    } catch (value) {
+      if (!(value instanceof ApiError) || value.status !== 401) error.value = presentError(value);
+      user.value = null;
+    }
     await loadCourseCatalog();
-    await restoreLab();
-    await loadCourseDetail();
+    if (user.value) await restoreLab();
+    if (selectedCourse.value) await loadCourseDetail();
   } catch (value) {
-    if (!(value instanceof ApiError) || value.status !== 401) error.value = presentError(value);
-    user.value = null;
+    error.value = presentError(value);
   } finally {
     bootstrapping.value = false;
   }
 }
 
+function openLogin(intent = 'header') {
+  loginIntent.value = intent;
+  loginError.value = null;
+  loginOpen.value = true;
+}
+
+function closeLogin() {
+  loginOpen.value = false;
+  loginError.value = null;
+}
+
 async function handleLogin(credentials) {
   authBusy.value = true;
-  bootstrapping.value = true;
-  error.value = null;
+  loginError.value = null;
+  const requestedCourseId = loginIntent.value === 'experiment' ? selectedCourse.value?.id : null;
   try {
     const auth = await login(credentials.username, credentials.password);
     user.value = auth.user;
     await loadCourseCatalog();
-    await restoreLab();
-    await loadCourseDetail();
+    const restoredActive = await restoreLab({activate: loginIntent.value === 'experiment'});
+    if (loginIntent.value === 'experiment' && !restoredActive && requestedCourseId) {
+      selectedKey.value = requestedCourseId;
+      if (snapshot.value?.lab?.courseId !== requestedCourseId) snapshot.value = null;
+      courseMode.value = 'lab';
+    }
+    if (selectedCourse.value) await loadCourseDetail();
+    loginOpen.value = false;
+    loginIntent.value = 'header';
   } catch (value) {
-    error.value = presentError(value);
+    loginError.value = presentError(value);
   } finally {
     authBusy.value = false;
-    bootstrapping.value = false;
   }
+}
+
+async function enterGuestMode() {
+  clearPoll();
+  user.value = null;
+  snapshot.value = null;
+  courseMode.value = 'course';
+  loginIntent.value = 'header';
+  try {
+    await loadCourseCatalog();
+    if (selectedCourse.value) await loadCourseDetail();
+  } catch (value) {
+    courseDetailError.value = presentError(value);
+  }
+}
+
+async function recoverAuthentication(value) {
+  if (!(value instanceof ApiError) || value.status !== 401) return false;
+  await enterGuestMode();
+  return true;
 }
 
 async function handleLogout() {
@@ -211,17 +258,14 @@ async function handleLogout() {
   error.value = null;
   try {
     await logout();
+    await enterGuestMode();
   } catch (value) {
-    if (!(value instanceof ApiError) || value.status !== 401) error.value = presentError(value);
+    if (value instanceof ApiError && value.status === 401) {
+      await enterGuestMode();
+    } else {
+      error.value = presentError(value);
+    }
   } finally {
-    clearPoll();
-    user.value = null;
-    courses.value = [];
-    courseDetail.value = null;
-    snapshot.value = null;
-    selectedCourseId.value = null;
-    courseDetailError.value = null;
-    courseMode.value = 'course';
     requestBusy.value = false;
   }
 }
@@ -232,13 +276,10 @@ async function loadSnapshot({silent = false} = {}) {
   if (!silent) snapshotLoading.value = true;
   try {
     snapshot.value = await getLab(labId);
-    selectedCourseId.value = snapshot.value.lab.courseId;
+    selectedKey.value = snapshot.value.lab.courseId;
     error.value = null;
   } catch (value) {
-    if (value instanceof ApiError && value.status === 401) {
-      clearPoll();
-      user.value = null;
-    } else {
+    if (!await recoverAuthentication(value)) {
       error.value = presentError(value);
     }
   } finally {
@@ -262,6 +303,7 @@ async function handleCreate() {
     courseMode.value = 'lab';
     schedulePoll();
   } catch (value) {
+    if (await recoverAuthentication(value)) return;
     error.value = presentError(value);
     if (value instanceof ApiError && value.code === 'LAB_ALREADY_ACTIVE') {
       await loadCourseCatalog();
@@ -282,7 +324,7 @@ async function handleReset() {
     snapshot.value = {...snapshot.value, latestOperation: data.operation};
     schedulePoll();
   } catch (value) {
-    error.value = presentError(value);
+    if (!await recoverAuthentication(value)) error.value = presentError(value);
   } finally {
     requestBusy.value = false;
   }
@@ -297,7 +339,7 @@ async function handleTerminate() {
     snapshot.value = {...snapshot.value, latestOperation: data.operation};
     schedulePoll();
   } catch (value) {
-    error.value = presentError(value);
+    if (!await recoverAuthentication(value)) error.value = presentError(value);
   } finally {
     requestBusy.value = false;
   }
@@ -312,7 +354,7 @@ async function handleLabAction(action) {
     snapshot.value = {...snapshot.value, latestOperation: data.operation};
     schedulePoll();
   } catch (value) {
-    error.value = presentError(value);
+    if (!await recoverAuthentication(value)) error.value = presentError(value);
   } finally {
     requestBusy.value = false;
   }
@@ -320,19 +362,36 @@ async function handleLabAction(action) {
 
 async function handleTrafficBatch(batch) {
   if (!snapshot.value?.lab?.id) throw new ApiError('实验不存在', {code: 'LAB_NOT_FOUND'});
-  return submitTrafficBatch(snapshot.value.lab.id, batch);
+  try {
+    return await submitTrafficBatch(snapshot.value.lab.id, batch);
+  } catch (value) {
+    await recoverAuthentication(value);
+    throw value;
+  }
 }
 
 function selectCourse(course) {
   if (activeCourseId.value && activeCourseId.value !== course.id) return;
-  selectedCourseId.value = course.id;
+  selectedKey.value = course.id;
   courseMode.value = 'course';
   clearPoll();
   if (!activeCourseId.value && snapshot.value?.lab?.courseId !== course.id) snapshot.value = null;
   loadCourseDetail(course);
 }
 
+function selectIntroduction() {
+  selectedKey.value = introductionKey;
+  courseMode.value = 'course';
+  courseDetail.value = null;
+  courseDetailError.value = null;
+  clearPoll();
+}
+
 function switchCourseMode(mode) {
+  if (mode === 'lab' && !user.value) {
+    openLogin('experiment');
+    return;
+  }
   if (mode === courseMode.value) return;
   courseMode.value = mode;
   if (mode === 'lab' && snapshot.value?.lab?.id) {
@@ -366,18 +425,21 @@ onBeforeUnmount(() => {
     <span>正在恢复会话</span>
   </div>
 
-  <LoginPanel v-else-if="!user" :busy="authBusy" :error="error" @submit="handleLogin" />
-
   <div v-else class="app-shell">
     <header class="app-header">
       <div class="brand-lockup">
         <span class="brand-mark"><ServerCog :size="22" /></span>
-        <div><strong>互联网后端架构学习平台</strong><small>实验控制台</small></div>
+        <div><strong>互联网后端架构学习平台</strong><small>理论课程与实验平台</small></div>
       </div>
       <div class="user-menu">
-        <span><UserRound :size="17" />{{ user.username }}</span>
-        <button class="icon-button" type="button" title="退出登录" :disabled="requestBusy" @click="handleLogout">
-          <LogOut :size="18" />
+        <template v-if="user">
+          <span><UserRound :size="17" />{{ user.username }}</span>
+          <button class="icon-button" type="button" title="退出登录" :disabled="requestBusy" @click="handleLogout">
+            <LogOut :size="18" />
+          </button>
+        </template>
+        <button v-else class="button button--primary" type="button" @click="openLogin('header')">
+          <LogIn :size="17" />登录实验
         </button>
       </div>
     </header>
@@ -385,60 +447,72 @@ onBeforeUnmount(() => {
     <div class="experiment-layout">
       <CourseRail
         :courses="courses"
-        :selected-course-id="selectedCourseId"
+        :selected-key="selectedKey"
         :active-course-id="activeCourseId"
         @select="selectCourse"
+        @select-introduction="selectIntroduction"
       />
       <div class="course-area">
-        <div
-          v-if="selectedCourse?.labAvailable"
-          class="course-mode-switch"
-          role="tablist"
-          aria-label="课程内容切换"
-        >
-          <button
-            :class="{'is-active': courseMode === 'course'}"
-            :aria-selected="courseMode === 'course'"
-            type="button"
-            role="tab"
-            @click="switchCourseMode('course')"
+        <SiteIntroduction v-if="selectedKey === introductionKey" />
+        <template v-else>
+          <div
+            v-if="selectedCourse?.labAvailable"
+            class="course-mode-switch"
+            role="tablist"
+            aria-label="课程内容切换"
           >
-            <BookOpen :size="17" />课程
-          </button>
-          <button
-            :class="{'is-active': courseMode === 'lab'}"
-            :aria-selected="courseMode === 'lab'"
-            type="button"
-            role="tab"
-            @click="switchCourseMode('lab')"
-          >
-            <FlaskConical :size="17" />实验
-          </button>
-        </div>
-        <CourseTheory
-          v-if="courseMode === 'course' || !selectedCourse?.labAvailable"
-          :course="selectedCourse"
-          :detail="courseDetail"
-          :loading="courseDetailLoading"
-          :error="courseDetailError"
-          @retry="loadCourseDetail()"
-        />
-        <LabWorkspace
-          v-else
-          :course="selectedCourse"
-          :snapshot="snapshot"
-          :now="now"
-          :busy="labBusy"
-          :loading="snapshotLoading"
-          :error="error"
-          :submit-batch="handleTrafficBatch"
-          @create="handleCreate"
-          @reset="handleReset"
-          @terminate="handleTerminate"
-          @refresh="loadSnapshot"
-          @action="handleLabAction"
-        />
+            <button
+              :class="{'is-active': courseMode === 'course'}"
+              :aria-selected="courseMode === 'course'"
+              type="button"
+              role="tab"
+              @click="switchCourseMode('course')"
+            >
+              <BookOpen :size="17" />课程
+            </button>
+            <button
+              :class="{'is-active': courseMode === 'lab'}"
+              :aria-selected="courseMode === 'lab'"
+              type="button"
+              role="tab"
+              @click="switchCourseMode('lab')"
+            >
+              <FlaskConical :size="17" />实验
+            </button>
+          </div>
+          <CourseTheory
+            v-if="courseMode === 'course' || !selectedCourse?.labAvailable"
+            :course="selectedCourse"
+            :detail="courseDetail"
+            :loading="courseDetailLoading"
+            :error="courseDetailError"
+            @retry="loadCourseDetail()"
+          />
+          <LabWorkspace
+            v-else
+            :course="selectedCourse"
+            :snapshot="snapshot"
+            :now="now"
+            :busy="labBusy"
+            :loading="snapshotLoading"
+            :error="error"
+            :submit-batch="handleTrafficBatch"
+            @create="handleCreate"
+            @reset="handleReset"
+            @terminate="handleTerminate"
+            @refresh="loadSnapshot"
+            @action="handleLabAction"
+          />
+        </template>
       </div>
     </div>
   </div>
+
+  <LoginDialog
+    :open="loginOpen"
+    :busy="authBusy"
+    :error="loginError"
+    @close="closeLogin"
+    @submit="handleLogin"
+  />
 </template>
