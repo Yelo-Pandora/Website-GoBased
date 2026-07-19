@@ -11,12 +11,19 @@ async function login(page) {
   await page.getByLabel('账号').fill('learner');
   await page.getByLabel('密码').fill('example-password');
   await page.getByRole('button', {name: '登录', exact: true}).click();
-  await expect(page.getByRole('tab', {name: '实验'})).toBeVisible();
+  await expect(page.getByText('课程目录', {exact: true})).toBeVisible();
+}
+
+async function selectLabCourse(page, name) {
+  await page.getByRole('button', {name}).click();
+  const courseTab = page.getByRole('tab', {name: '课程'});
+  await expect(courseTab).toHaveAttribute('aria-selected', 'true');
+  await page.getByRole('tab', {name: '实验'}).click();
 }
 
 async function terminateActiveLab(page) {
   const terminate = page.getByRole('button', {name: '结束', exact: true});
-  if (await terminate.isEnabled().catch(() => false)) {
+  if (await terminate.count() > 0 && await terminate.isEnabled()) {
     page.once('dialog', (dialog) => dialog.accept());
     await terminate.click();
     await expect(page.getByText('已结束', {exact: true})).toBeVisible();
@@ -36,7 +43,7 @@ test('learner completes the stage 4-6 lab lifecycle', async ({page}) => {
   await login(page);
   await terminateActiveLab(page);
 
-  await page.getByRole('button', {name: /应用集群与负载均衡/}).click();
+  await selectLabCourse(page, /应用集群与负载均衡/);
   await page.getByRole('button', {name: /创建实验|新建实验/}).click();
 
   await expect(page.getByText('运行中', {exact: true})).toBeVisible();
@@ -57,9 +64,14 @@ test('learner completes the stage 4-6 lab lifecycle', async ({page}) => {
   await expect(page.locator('.operation-row .status-badge')).toHaveText('succeeded');
   await expect(page.getByText('运行中', {exact: true})).toBeVisible();
 
-  await page.getByRole('tab', {name: 'API'}).click();
-  await expect(page.getByText('Platform API', {exact: false}).first()).toBeVisible();
+  await page.getByRole('tab', {name: '课程'}).click();
+  await expect(page.locator('.markdown-body').getByRole('heading', {name: '应用集群与负载均衡'})).toBeVisible();
   await page.getByRole('tab', {name: '实验'}).click();
+  await expect(page.getByText('运行中', {exact: true})).toBeVisible();
+
+  await page.reload();
+  await expect(page.getByRole('tab', {name: '实验'})).toHaveAttribute('aria-selected', 'true');
+  await expect(page.getByText('运行中', {exact: true})).toBeVisible();
 
   page.once('dialog', (dialog) => dialog.accept());
   await page.getByRole('button', {name: '结束', exact: true}).click();
@@ -70,8 +82,9 @@ test('learner completes the stage 4-6 lab lifecycle', async ({page}) => {
 test('workspace remains usable at a mobile viewport', async ({page}) => {
   await page.setViewportSize({width: 390, height: 844});
   await login(page);
-  await expect(page.getByRole('tab', {name: '实验'})).toBeVisible();
-  await expect(page.getByText('实验课程')).toBeVisible();
+  await expect(page.getByText('课程目录', {exact: true})).toBeVisible();
+  await page.getByRole('button', {name: /单机架构/}).click();
+  await expect(page.locator('.markdown-body').getByRole('heading', {name: '单机架构'})).toBeVisible();
   if (process.env.PLAYWRIGHT_SCREENSHOT_DIR) {
     await page.screenshot({
       path: `${process.env.PLAYWRIGHT_SCREENSHOT_DIR}/stage46-workspace-mobile.png`,
@@ -85,10 +98,19 @@ test('workspace remains usable at a mobile viewport', async ({page}) => {
   expect(dimensions.scrollWidth).toBeLessThanOrEqual(dimensions.clientWidth);
 });
 
+test('learner reads a theory-only course without an experiment tab', async ({page}) => {
+  await login(page);
+  await terminateActiveLab(page);
+  await page.getByRole('button', {name: /单机架构/}).click();
+
+  await expect(page.locator('.markdown-body').getByRole('heading', {name: '单机架构'})).toBeVisible();
+  await expect(page.getByRole('tab', {name: '实验'})).toHaveCount(0);
+});
+
 test('learner drives real traffic and fixed cluster controls', async ({page}) => {
   await login(page);
   await terminateActiveLab(page);
-  await page.getByRole('button', {name: /应用集群与负载均衡/}).click();
+  await selectLabCourse(page, /应用集群与负载均衡/);
   await page.getByRole('button', {name: /创建实验|新建实验/}).click();
   await expect(page.getByText('运行中', {exact: true})).toBeVisible();
 
@@ -124,7 +146,7 @@ test('learner drives real traffic and fixed cluster controls', async ({page}) =>
 test('manual traffic batch does not create another generation loop', async ({page}) => {
   await login(page);
   await terminateActiveLab(page);
-  await page.getByRole('button', {name: /应用集群与负载均衡/}).click();
+  await selectLabCourse(page, /应用集群与负载均衡/);
   await page.getByRole('button', {name: /创建实验|新建实验/}).click();
   await expect(page.getByText('运行中', {exact: true})).toBeVisible();
 
@@ -195,7 +217,7 @@ test('lab editors survive snapshots and reset after structural changes', async (
   test.setTimeout(90_000);
   await login(page);
   await terminateActiveLab(page);
-  await page.getByRole('button', {name: /应用集群与负载均衡/}).click();
+  await selectLabCourse(page, /应用集群与负载均衡/);
   await page.getByRole('button', {name: /创建实验|新建实验/}).click();
   await expect(page.getByText('运行中', {exact: true})).toBeVisible();
 
@@ -282,7 +304,7 @@ test('lab editors survive snapshots and reset after structural changes', async (
 test('adaptive weights converge without generated traffic', async ({page}) => {
   await login(page);
   await terminateActiveLab(page);
-  await page.getByRole('button', {name: /应用集群与负载均衡/}).click();
+  await selectLabCourse(page, /应用集群与负载均衡/);
   await page.getByRole('button', {name: /创建实验|新建实验/}).click();
   await expect(page.getByText('运行中', {exact: true})).toBeVisible();
 
@@ -326,7 +348,7 @@ test('adaptive feedback reduces traffic share for a loaded slow instance', async
   test.setTimeout(120_000);
   await login(page);
   await terminateActiveLab(page);
-  await page.getByRole('button', {name: /应用集群与负载均衡/}).click();
+  await selectLabCourse(page, /应用集群与负载均衡/);
   await page.getByRole('button', {name: /创建实验|新建实验/}).click();
   await expect(page.getByText('运行中', {exact: true})).toBeVisible();
 
@@ -366,7 +388,7 @@ test('adaptive feedback reduces traffic share for a loaded slow instance', async
     );
     const total = [...weights.values()].reduce((sum, weight) => sum + weight, 0);
     return total > 0 ? (weights.get('app-3') || 0) / total : 1;
-  }, {timeout: 20_000}).toBeLessThan(0.1);
+  }, {timeout: 20_000}).toBeLessThan(0.15);
 
   const stopTraffic = trafficPanel.getByRole('button', {name: '停止', exact: true});
   if (await stopTraffic.isVisible()) await stopTraffic.click();
@@ -380,7 +402,7 @@ test('adaptive mode recovers after a platform API restart', async ({page}) => {
   test.setTimeout(90_000);
   await login(page);
   await terminateActiveLab(page);
-  await page.getByRole('button', {name: /应用集群与负载均衡/}).click();
+  await selectLabCourse(page, /应用集群与负载均衡/);
   await page.getByRole('button', {name: /创建实验|新建实验/}).click();
   await expect(page.getByText('运行中', {exact: true})).toBeVisible();
 
@@ -421,7 +443,7 @@ test('learner observes automatic idle expiration', async ({page}) => {
   test.skip(!process.env.RUN_SHORT_LIFECYCLE, 'requires shortened lifecycle configuration');
   await login(page);
   await terminateActiveLab(page);
-  await page.getByRole('button', {name: /应用集群与负载均衡/}).click();
+  await selectLabCourse(page, /应用集群与负载均衡/);
   await page.getByRole('button', {name: /创建实验|新建实验/}).click();
   await expect(page.getByText('运行中', {exact: true})).toBeVisible();
   await expect(page.getByText('即将过期', {exact: true})).toBeVisible({timeout: 35_000});

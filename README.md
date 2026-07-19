@@ -7,6 +7,7 @@
 ## 基础组件
 
 * Vue 单页应用和公网入口 Nginx
+* 回环地址独立 Swagger UI
 * Go 平台 API
 * Go 高权限编排器
 * Go 动态实验应用镜像
@@ -29,6 +30,11 @@ docker compose ps
 浏览器访问 `http://127.0.0.1:8080`。
 端口可以通过 `.env` 中的 `HTTP_PORT` 修改。
 
+普通用户页面不提供 Swagger 或 OpenAPI 文件。
+运维人员可在服务器本机访问 `http://127.0.0.1:8081`，端口可以通过
+`.env` 中的 `SWAGGER_PORT` 修改。
+该端口只绑定回环地址，并通过容器内部网络代理 Platform API 的 Try it out 请求。
+
 ## 验证
 
 ```bash
@@ -38,7 +44,12 @@ npm --prefix web run test:e2e
 docker compose config --quiet
 docker compose --profile images build lab-app
 curl --fail http://127.0.0.1:8080/readyz
+curl --fail http://127.0.0.1:8081/healthz
+curl --fail http://127.0.0.1:8081/platform-api.openapi.yaml
+curl --fail-with-body http://127.0.0.1:8080/platform-api.openapi.yaml
 ```
+
+最后一条公网 OpenAPI 检查预期返回 `404`，因此命令本身应以非零状态退出。
 
 完整需求、架构和脚手架设计位于 `docs/superpowers/specs`。
 

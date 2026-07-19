@@ -1,0 +1,8 @@
+{
+  "name": "backend-learning-platform-private-swagger",
+  "private": true,
+  "version": "0.1.0",
+  "dependencies": {
+    "swagger-ui-dist": "5.32.8"
+  }
+}

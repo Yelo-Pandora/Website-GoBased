@@ -14,7 +14,7 @@ defineEmits(['select']);
   <aside class="course-rail" aria-label="课程列表">
     <div class="section-heading">
       <BookOpen :size="18" />
-      <h2>实验课程</h2>
+      <h2>课程目录</h2>
     </div>
     <nav class="course-list">
       <button

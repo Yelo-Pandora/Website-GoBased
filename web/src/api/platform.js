@@ -82,6 +82,11 @@ export async function listCourses() {
   return payload.data.courses;
 }
 
+export async function getCourse(slug) {
+  const payload = await request(`/api/v1/courses/${encodeURIComponent(slug)}`);
+  return payload.data.course;
+}
+
 export async function createLab(courseId) {
   const payload = await request('/api/v1/labs', {
     method: 'POST',
