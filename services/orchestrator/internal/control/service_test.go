@@ -19,6 +19,7 @@ type dockerStub struct {
 	containers []dockerapi.Resource
 	networks   []dockerapi.Resource
 	removed    []string
+	specs      []dockerapi.ContainerSpec
 }
 
 func (d *dockerStub) InspectImage(context.Context, string) error { return nil }
@@ -45,6 +46,7 @@ func (d *dockerStub) EnsureContainer(
 	_ context.Context,
 	spec dockerapi.ContainerSpec,
 ) (dockerapi.EnsureResult, error) {
+	d.specs = append(d.specs, spec)
 	resource := dockerapi.Resource{
 		ID: spec.Name + "-id", Name: spec.Name, Kind: "container", Labels: spec.Labels,
 	}
@@ -248,6 +250,41 @@ func TestProvisionReturnsPersistableResourceFacts(t *testing.T) {
 	}
 }
 
+func TestLabAppEnvironmentAddsCacheSettingsOnlyForCacheScenario(t *testing.T) {
+	service, _, _, _ := newTestService(t)
+	application, ok := service.registry.Scenario("application_cluster_scenario_v1")
+	if !ok {
+		t.Fatal("application cluster scenario is missing")
+	}
+	names, err := service.names("lab-abcdef12", application)
+	if err != nil {
+		t.Fatalf("names() error = %v", err)
+	}
+	environment := labAppEnvironment(
+		"lab-abcdef12", application, names, "app-1", "password", 100,
+	)
+	if _, ok := environment["CACHE_L1_MAX_PRODUCT_ENTRIES"]; ok {
+		t.Fatalf("application environment contains cache settings: %#v", environment)
+	}
+
+	cacheScenario, ok := service.registry.Scenario("multi_level_cache_scenario_v1")
+	if !ok {
+		t.Fatal("multi-level cache scenario is missing")
+	}
+	cacheNames, err := service.names("lab-abcdef12", cacheScenario)
+	if err != nil {
+		t.Fatalf("cache names() error = %v", err)
+	}
+	cacheEnvironment := labAppEnvironment(
+		"lab-abcdef12", cacheScenario, cacheNames, "app-1", "password", 100,
+	)
+	if cacheEnvironment["CACHE_L1_MAX_PRODUCT_ENTRIES"] != "9" ||
+		cacheEnvironment["CACHE_INSTANCE_COUNT"] != "3" ||
+		cacheEnvironment["REDIS_ADDR"] != "lab-redis:6379" {
+		t.Fatalf("cache environment = %#v", cacheEnvironment)
+	}
+}
+
 func TestResetRebuildsInitialLabResources(t *testing.T) {
 	service, _, database, nginx := newTestService(t)
 	provision := service.Execute(context.Background(), protocol.Command{
@@ -418,7 +455,7 @@ func TestCreateRedisIsIdempotentWhenContainerExists(t *testing.T) {
 	}}
 	response := service.Execute(context.Background(), protocol.Command{
 		CommandType: commandCreateRedis,
-		CommandID: "cmd-create-redis", OperationID: "op-create-redis",
+		CommandID:   "cmd-create-redis", OperationID: "op-create-redis",
 		LabID: "lab-abcdef12", RequestedBy: "1",
 		Payload: []byte(`{"scenarioTemplateId":"multi_level_cache_scenario_v1"}`),
 	})

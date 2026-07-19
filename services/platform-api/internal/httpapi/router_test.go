@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"website-gobased/internal/protocol"
 	platformauth "website-gobased/services/platform-api/internal/auth"
 	"website-gobased/services/platform-api/internal/course"
 	"website-gobased/services/platform-api/internal/lab"
@@ -511,6 +512,20 @@ func TestLabActionAcceptsBalancingMode(t *testing.T) {
 	}
 	if labs.actionInput.BalancingMode == nil || *labs.actionInput.BalancingMode != mode {
 		t.Fatalf("balancing mode input = %#v", labs.actionInput)
+	}
+}
+
+func TestReplaceRedisStateClearsStaleInventoryWithAuthoritativeTime(t *testing.T) {
+	observedAt := time.Date(2026, time.July, 18, 14, 0, 0, 0, time.UTC)
+	cacheState := protocol.CacheState{Redis: protocol.CacheRedisState{
+		Status:  "running",
+		Entries: []protocol.CacheEntry{{Product: protocol.CacheProduct{ID: 1}}},
+	}}
+	replaceRedisState(&cacheState, "absent", observedAt)
+	if cacheState.Redis.Status != "absent" ||
+		!cacheState.Redis.ObservedAt.Equal(observedAt) ||
+		len(cacheState.Redis.Entries) != 0 {
+		t.Fatalf("Redis state = %#v", cacheState.Redis)
 	}
 }
 

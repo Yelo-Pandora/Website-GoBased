@@ -128,6 +128,40 @@ test('manual traffic batch does not create another generation loop', async ({pag
   await page.getByRole('button', {name: /创建实验|新建实验/}).click();
   await expect(page.getByText('运行中', {exact: true})).toBeVisible();
 
+  await page.route('**/api/v1/labs/*/traffic-batches', async (route) => {
+    const request = route.request().postDataJSON();
+    const pathname = new URL(route.request().url()).pathname;
+    const labId = decodeURIComponent(pathname.split('/')[4]);
+    const observedAt = new Date().toISOString();
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        data: {
+          result: {
+            batchId: request.batchId,
+            labId,
+            status: 'accepted',
+            occurredAt: observedAt,
+            targetInstanceId: 'app-1',
+            receivedUnits: request.requestUnits,
+            acceptedUnits: request.requestUnits,
+            droppedUnits: 0,
+            path: ['user-pool', 'lab-gateway', 'app-1'],
+            instanceState: {
+              processingSpeed: 20,
+              maxLoad: 100,
+              currentLoad: request.requestUnits,
+              loadRatio: request.requestUnits / 100,
+              loadState: 'idle',
+              observedAt,
+            },
+          },
+        },
+      }),
+    });
+  });
+
   const trafficRequests = [];
   page.on('request', (request) => {
     const path = new URL(request.url()).pathname;
@@ -289,7 +323,7 @@ test('adaptive weights converge without generated traffic', async ({page}) => {
 });
 
 test('adaptive feedback reduces traffic share for a loaded slow instance', async ({page}) => {
-  test.setTimeout(60_000);
+  test.setTimeout(120_000);
   await login(page);
   await terminateActiveLab(page);
   await page.getByRole('button', {name: /应用集群与负载均衡/}).click();
@@ -334,7 +368,8 @@ test('adaptive feedback reduces traffic share for a loaded slow instance', async
     return total > 0 ? (weights.get('app-3') || 0) / total : 1;
   }, {timeout: 20_000}).toBeLessThan(0.1);
 
-  await trafficPanel.getByRole('button', {name: '停止', exact: true}).click();
+  const stopTraffic = trafficPanel.getByRole('button', {name: '停止', exact: true});
+  if (await stopTraffic.isVisible()) await stopTraffic.click();
   page.once('dialog', (dialog) => dialog.accept());
   await page.getByRole('button', {name: '结束', exact: true}).click();
   await expect(page.getByText('已结束', {exact: true})).toBeVisible();

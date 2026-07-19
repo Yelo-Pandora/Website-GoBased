@@ -784,32 +784,18 @@ func (s *Service) ensureApp(
 	if err != nil {
 		return dockerapi.EnsureResult{}, err
 	}
+	environment := labAppEnvironment(
+		command.LabID,
+		scenario,
+		names,
+		instanceName,
+		password,
+		performance,
+	)
 	return s.docker.EnsureContainer(ctx, dockerapi.ContainerSpec{
 		Name: names.appContainer(instanceName), Image: image, User: templateValue.User,
-		Environment: map[string]string{
-			"LAB_APP_ADDR": ":8080", "LAB_ID": command.LabID,
-			"INSTANCE_ID": instanceName, "SCENARIO_TYPE": scenario.ScenarioType,
-			"MYSQL_HOST": "lab-db", "MYSQL_PORT": "3306",
-			"MYSQL_DATABASE": names.database, "MYSQL_USER": names.databaseUser,
-			"MYSQL_PASSWORD":      password,
-			"PERFORMANCE_PERCENT": strconv.Itoa(performance),
-			"PROCESSING_SPEED": strconv.Itoa(
-				scenario.LoadModel.BaseProcessingSpeed * performance / 100,
-			),
-			"MAX_LOAD":                     strconv.Itoa(scenario.LoadModel.MaxLoad),
-			"REDIS_ADDR":                   "lab-redis:6379",
-			"CACHE_L1_MAX_PRODUCT_ENTRIES": strconv.Itoa(scenario.Cache.L1MaxProductEntries),
-			"CACHE_INSTANCE_COUNT":         strconv.Itoa(max(1, scenario.Topology.InitialInstances)),
-			"CACHE_L1_TTL_MS":              strconv.Itoa(scenario.Cache.L1TTLMS),
-			"CACHE_L2_TTL_MS":              strconv.Itoa(scenario.Cache.L2TTLMS),
-			"CACHE_L2_TTL_JITTER_PERCENT":  strconv.Itoa(scenario.Cache.L2TTLJitterPercent),
-			"CACHE_LATENCY_L1_MS":          strconv.Itoa(scenario.Cache.SimulatedLatencyMS.L1),
-			"CACHE_LATENCY_REDIS_MS":       strconv.Itoa(scenario.Cache.SimulatedLatencyMS.Redis),
-			"CACHE_LATENCY_MYSQL_MS":       strconv.Itoa(scenario.Cache.SimulatedLatencyMS.MySQL),
-			"CACHE_LATENCY_DEGRADED_MS":    strconv.Itoa(scenario.Cache.SimulatedLatencyMS.Degraded),
-			"TZ":                           "UTC",
-		},
-		Labels: labels, NetworkName: names.network,
+		Environment: environment,
+		Labels:      labels, NetworkName: names.network,
 		NetworkAliases: []string{names.appContainer(instanceName)},
 		ReadOnlyRootFS: templateValue.ReadOnlyRootFilesystem,
 		CapDrop:        append([]string(nil), templateValue.CapDrop...),
@@ -817,6 +803,61 @@ func (s *Service) ensureApp(
 		NanoCPUs:       nanoCPUs(cpuCores), PidsLimit: int64(scenario.Resources.PidsLimit),
 		Healthcheck: healthcheck(templateValue),
 	})
+}
+
+func labAppEnvironment(
+	labID string,
+	scenario templates.Scenario,
+	names resourceNames,
+	instanceName string,
+	password string,
+	performance int,
+) map[string]string {
+	environment := map[string]string{
+		"LAB_APP_ADDR":        ":8080",
+		"LAB_ID":              labID,
+		"INSTANCE_ID":         instanceName,
+		"SCENARIO_TYPE":       scenario.ScenarioType,
+		"MYSQL_HOST":          "lab-db",
+		"MYSQL_PORT":          "3306",
+		"MYSQL_DATABASE":      names.database,
+		"MYSQL_USER":          names.databaseUser,
+		"MYSQL_PASSWORD":      password,
+		"PERFORMANCE_PERCENT": strconv.Itoa(performance),
+		"PROCESSING_SPEED": strconv.Itoa(
+			scenario.LoadModel.BaseProcessingSpeed * performance / 100,
+		),
+		"MAX_LOAD": strconv.Itoa(scenario.LoadModel.MaxLoad),
+		"TZ":       "UTC",
+	}
+	if scenario.ResourceTemplates.Redis == "" {
+		return environment
+	}
+	environment["REDIS_ADDR"] = "lab-redis:6379"
+	environment["CACHE_L1_MAX_PRODUCT_ENTRIES"] = strconv.Itoa(
+		scenario.Cache.L1MaxProductEntries,
+	)
+	environment["CACHE_INSTANCE_COUNT"] = strconv.Itoa(
+		max(1, scenario.Topology.InitialInstances),
+	)
+	environment["CACHE_L1_TTL_MS"] = strconv.Itoa(scenario.Cache.L1TTLMS)
+	environment["CACHE_L2_TTL_MS"] = strconv.Itoa(scenario.Cache.L2TTLMS)
+	environment["CACHE_L2_TTL_JITTER_PERCENT"] = strconv.Itoa(
+		scenario.Cache.L2TTLJitterPercent,
+	)
+	environment["CACHE_LATENCY_L1_MS"] = strconv.Itoa(
+		scenario.Cache.SimulatedLatencyMS.L1,
+	)
+	environment["CACHE_LATENCY_REDIS_MS"] = strconv.Itoa(
+		scenario.Cache.SimulatedLatencyMS.Redis,
+	)
+	environment["CACHE_LATENCY_MYSQL_MS"] = strconv.Itoa(
+		scenario.Cache.SimulatedLatencyMS.MySQL,
+	)
+	environment["CACHE_LATENCY_DEGRADED_MS"] = strconv.Itoa(
+		scenario.Cache.SimulatedLatencyMS.Degraded,
+	)
+	return environment
 }
 
 func (s *Service) ensureRedis(

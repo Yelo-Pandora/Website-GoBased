@@ -223,16 +223,20 @@ func (h *handler) getLab(ctx *gin.Context) {
 		}
 		if merged != nil {
 			if !redisPresent {
-				merged.Redis.Status = "absent"
-				merged.Redis.Entries = []protocol.CacheEntry{}
+				replaceRedisState(merged, "absent", time.Now().UTC())
 			} else if merged.Redis.Status == "" {
-				merged.Redis.Status = "unavailable"
-				merged.Redis.Entries = []protocol.CacheEntry{}
+				replaceRedisState(merged, "unavailable", time.Now().UTC())
 			}
 			snapshot.Cache = merged
 		}
 	}
 	ctx.JSON(http.StatusOK, gin.H{"data": snapshot})
+}
+
+func replaceRedisState(cacheState *protocol.CacheState, status string, observedAt time.Time) {
+	cacheState.Redis = protocol.CacheRedisState{
+		Status: status, ObservedAt: observedAt, Entries: []protocol.CacheEntry{},
+	}
 }
 
 func (h *handler) resetLab(ctx *gin.Context) {

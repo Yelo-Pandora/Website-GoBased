@@ -385,7 +385,7 @@ paths:
   /api/v1/labs/{labId}/actions:
     post:
       tags: [Labs]
-      summary: Submit one guided cluster topology action
+      summary: Submit one guided lab action
       operationId: submitLabAction
       security:
         - sessionCookie: []
@@ -684,6 +684,11 @@ components:
           minLength: 1
           maxLength: 64
     LabTopologyActionRequest:
+      oneOf:
+        - $ref: "#/components/schemas/LabClusterActionRequest"
+        - $ref: "#/components/schemas/LabInstanceL1ActionRequest"
+        - $ref: "#/components/schemas/LabSessionRedisActionRequest"
+    LabClusterActionRequest:
       type: object
       additionalProperties: false
       required: [operationId, actionType, targetInstanceId, parameters]
@@ -728,6 +733,43 @@ components:
             balancingMode:
               type: string
               enum: [fixed, adaptive]
+    LabInstanceL1ActionRequest:
+      type: object
+      additionalProperties: false
+      required: [operationId, actionType, targetInstanceId, parameters]
+      properties:
+        operationId:
+          type: string
+          minLength: 1
+          maxLength: 64
+        actionType:
+          type: string
+          enum: [REMOVE_INSTANCE_L1, ADD_INSTANCE_L1]
+        targetInstanceId:
+          type: string
+          pattern: "^app-[0-9]+$"
+        parameters:
+          type: object
+          additionalProperties: false
+          maxProperties: 0
+    LabSessionRedisActionRequest:
+      type: object
+      additionalProperties: false
+      required: [operationId, actionType, targetInstanceId, parameters]
+      properties:
+        operationId:
+          type: string
+          minLength: 1
+          maxLength: 64
+        actionType:
+          type: string
+          enum: [REMOVE_SESSION_REDIS, ADD_SESSION_REDIS]
+        targetInstanceId:
+          type: "null"
+        parameters:
+          type: object
+          additionalProperties: false
+          maxProperties: 0
     LabSession:
       type: object
       required:

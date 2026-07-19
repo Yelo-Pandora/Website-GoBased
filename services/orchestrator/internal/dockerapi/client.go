@@ -17,7 +17,11 @@ import (
 	"time"
 )
 
-const maxResponseBytes = 1 << 20
+const (
+	maxResponseBytes         = 1 << 20
+	defaultReadyPollInterval = 100 * time.Millisecond
+	defaultReadyTimeout      = 30 * time.Second
+)
 
 // APIError is a failed Docker Engine API response.
 type APIError struct {
@@ -88,9 +92,11 @@ type Resource struct {
 
 // Client calls a Docker Socket Proxy through a fixed HTTP endpoint.
 type Client struct {
-	baseURL    *url.URL
-	apiVersion string
-	httpClient *http.Client
+	baseURL           *url.URL
+	apiVersion        string
+	httpClient        *http.Client
+	readyPollInterval time.Duration
+	readyTimeout      time.Duration
 }
 
 // NewClient returns a bounded Docker Engine API client.
@@ -107,9 +113,11 @@ func NewClient(host, apiVersion string, timeout time.Duration) (*Client, error) 
 		return nil, errors.New("docker API version is invalid")
 	}
 	return &Client{
-		baseURL:    baseURL,
-		apiVersion: "v" + apiVersion,
-		httpClient: &http.Client{Timeout: timeout},
+		baseURL:           baseURL,
+		apiVersion:        "v" + apiVersion,
+		httpClient:        &http.Client{Timeout: timeout},
+		readyPollInterval: defaultReadyPollInterval,
+		readyTimeout:      defaultReadyTimeout,
 	}, nil
 }
 
@@ -118,7 +126,10 @@ func newClient(rawURL, apiVersion string, client *http.Client) (*Client, error) 
 	if err != nil {
 		return nil, err
 	}
-	return &Client{baseURL: baseURL, apiVersion: apiVersion, httpClient: client}, nil
+	return &Client{
+		baseURL: baseURL, apiVersion: apiVersion, httpClient: client,
+		readyPollInterval: defaultReadyPollInterval, readyTimeout: defaultReadyTimeout,
+	}, nil
 }
 
 // Ping verifies access to the socket proxy.
@@ -285,6 +296,11 @@ func (c *Client) EnsureContainer(ctx context.Context, spec ContainerSpec) (Ensur
 				return EnsureResult{}, err
 			}
 		}
+		if spec.Healthcheck != nil {
+			if err := c.waitContainerReady(ctx, existing.ID); err != nil {
+				return EnsureResult{}, err
+			}
+		}
 		return EnsureResult{ID: existing.ID, Name: spec.Name}, nil
 	}
 	if !IsNotFound(err) {
@@ -331,7 +347,55 @@ func (c *Client) EnsureContainer(ctx context.Context, spec ContainerSpec) (Ensur
 		_ = c.RemoveContainer(context.WithoutCancel(ctx), response.ID)
 		return EnsureResult{}, err
 	}
+	if spec.Healthcheck != nil {
+		if err := c.waitContainerReady(ctx, response.ID); err != nil {
+			_ = c.RemoveContainer(context.WithoutCancel(ctx), response.ID)
+			return EnsureResult{}, err
+		}
+	}
 	return EnsureResult{ID: response.ID, Name: spec.Name, Created: true}, nil
+}
+
+func (c *Client) waitContainerReady(ctx context.Context, containerID string) error {
+	ticker := time.NewTicker(c.readyPollInterval)
+	defer ticker.Stop()
+	timer := time.NewTimer(c.readyTimeout)
+	defer timer.Stop()
+	for {
+		container, err := c.inspectContainer(ctx, containerID)
+		if err != nil {
+			return fmt.Errorf("inspect container readiness: %w", err)
+		}
+		if !container.State.Running {
+			return fmt.Errorf(
+				"container stopped before becoming ready: status=%s exitCode=%d",
+				container.State.Status,
+				container.State.ExitCode,
+			)
+		}
+		if container.State.Health == nil {
+			return errors.New("container health state is unavailable")
+		}
+		switch container.State.Health.Status {
+		case "healthy":
+			return nil
+		case "unhealthy":
+			return errors.New("container became unhealthy before becoming ready")
+		case "starting":
+		default:
+			return fmt.Errorf(
+				"container health state is invalid: %s",
+				container.State.Health.Status,
+			)
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-timer.C:
+			return errors.New("container readiness timed out")
+		case <-ticker.C:
+		}
+	}
 }
 
 // StartContainer starts an existing container.
@@ -531,7 +595,12 @@ type containerInspect struct {
 		Labels map[string]string `json:"Labels"`
 	} `json:"Config"`
 	State struct {
-		Running bool `json:"Running"`
+		Running  bool   `json:"Running"`
+		Status   string `json:"Status"`
+		ExitCode int    `json:"ExitCode"`
+		Health   *struct {
+			Status string `json:"Status"`
+		} `json:"Health"`
 	} `json:"State"`
 }
 

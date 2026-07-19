@@ -255,7 +255,7 @@ onBeforeUnmount(() => {
           <Server :size="18" /><span><strong>{{ instance.instanceName }}</strong><small>{{ l1State(instance.instanceId).status === 'disabled' ? 'L1 已去除' : 'L1 · 9 项' }}</small></span>
         </article>
       </div>
-      <article class="cache-node cache-node--redis" :data-status="redisState.status"><Database :size="20" /><strong>Redis L2</strong><small>共享缓存</small></article>
+      <article class="cache-node cache-node--redis" :data-status="redisState.status"><Database :size="20" /><strong>{{ redisState.status === 'absent' ? 'Redis 未部署' : 'Redis L2' }}</strong><small>{{ redisState.status === 'absent' ? '已从实验移除' : redisState.status === 'unavailable' ? '连接不可用' : '共享缓存' }}</small></article>
       <article class="cache-node cache-node--mysql"><Database :size="20" /><strong>MySQL</strong><small>真实回源</small></article>
       <span v-for="flight in flights" :key="flight.id" class="cache-flight" :class="`cache-flight--${flight.resolvedBy}`" :style="flightStyle(flight)" :title="`${flight.product.name} · ${flight.resolvedBy} · ${flight.latency}ms`">{{ flight.product.id }}</span>
     </div>
