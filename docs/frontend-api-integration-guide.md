@@ -762,7 +762,7 @@ SDS 明确要求以下字段：
 ```
 
 多级缓存只允许 `REMOVE_INSTANCE_L1`、`ADD_INSTANCE_L1`、
-`REMOVE_SESSION_REDIS` 和 `ADD_SESSION_REDIS`。缓存故障课程不提供实验动作。
+`REMOVE_SESSION_REDIS` 和 `ADD_SESSION_REDIS`。缓存故障内容在多级缓存正文中讲解，不增加实验动作。
 
 ### 7.4 `POST /api/v1/labs/:id/traffic-batches`
 

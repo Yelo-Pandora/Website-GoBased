@@ -40,22 +40,14 @@ INSERT INTO courses (
     'cache',
     'active',
     40,
-    '观察应用进程内 L1、会话 Redis L2 和 MySQL 回源链路。'
-  ),
-  (
-    'cache-failures',
-    '缓存故障',
-    'cache',
-    'theory',
-    50,
-    '讲解缓存穿透、击穿、雪崩、Redis 故障与常见保护思路。'
+    '理解 L1、Redis、MySQL 读取链路，以及穿透、击穿、雪崩和 Redis 故障。'
   ),
   (
     'database-read-write-splitting',
     '数据库读写分离',
     'database',
     'coming_soon',
-    60,
+    50,
     '后续课程占位。'
   ),
   (
@@ -63,7 +55,7 @@ INSERT INTO courses (
     '分库分表与分布式数据库',
     'database',
     'coming_soon',
-    70,
+    60,
     '后续课程占位。'
   ),
   (
@@ -71,7 +63,7 @@ INSERT INTO courses (
     'CDN 与反向代理',
     'network',
     'coming_soon',
-    80,
+    70,
     '后续课程占位。'
   ),
   (
@@ -79,7 +71,7 @@ INSERT INTO courses (
     '搜索引擎与 NoSQL',
     'storage',
     'coming_soon',
-    90,
+    80,
     '后续课程占位。'
   ),
   (
@@ -87,7 +79,7 @@ INSERT INTO courses (
     '业务拆分与分布式系统',
     'distributed',
     'coming_soon',
-    100,
+    90,
     '后续课程占位。'
   ),
   (
@@ -95,7 +87,7 @@ INSERT INTO courses (
     '微服务架构',
     'distributed',
     'coming_soon',
-    110,
+    100,
     '后续课程占位。'
   ),
   (
@@ -103,7 +95,7 @@ INSERT INTO courses (
     '容器化与云平台',
     'operations',
     'coming_soon',
-    120,
+    110,
     '后续课程占位。'
   )
 ON DUPLICATE KEY UPDATE

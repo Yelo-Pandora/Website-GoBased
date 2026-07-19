@@ -39,6 +39,7 @@ go.work.sum
 # Local runtime data
 runtime/
 *.pid
+.superpowers/brainstorm/
 
 # IDE and editor directories
 .idea/

@@ -50,17 +50,17 @@ func NewContentStore() *ContentStore {
 			file: "content/multi-level-cache.md",
 			implementation: Implementation{
 				RequestPath: []string{"lab-app-l1", "session-redis", "shared-mysql"},
-				KeyConcepts: []string{"cache-aside", "cache-invalidation", "bounded-ttl"},
+				KeyConcepts: []string{
+					"cache-aside",
+					"cache-invalidation",
+					"bounded-ttl",
+					"cache-penetration",
+					"cache-breakdown",
+					"cache-avalanche",
+					"redis-fallback",
+				},
 			},
 			lab: labDefinition("multi_level_cache", 1, 3),
-		},
-		"cache-failures": {
-			file: "content/cache-failures.md",
-			implementation: Implementation{
-				RequestPath: []string{"lab-app-l1", "session-redis", "shared-mysql"},
-				KeyConcepts: []string{"cache-penetration", "cache-breakdown", "cache-avalanche", "redis-fallback"},
-			},
-			lab: Lab{Available: false},
 		},
 	}}
 }

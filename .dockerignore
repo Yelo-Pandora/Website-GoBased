@@ -1,6 +1,6 @@
 .git
 .gitignore
-.superpowers
+.superpowers/brainstorm/
 .env
 bin
 runtime

@@ -5,7 +5,7 @@ const learningSteps = [
   {title: '单机架构', copy: '先理解入口、应用和数据集中部署时的职责与限制。'},
   {title: '应用与数据分离', copy: '再观察应用和数据库拆开后新增的网络边界。'},
   {title: '应用集群', copy: '通过扩容、权重和自适应控制学习负载均衡。'},
-  {title: '多级缓存', copy: '最后比较进程内 L1、Redis 与 MySQL 的读取路径。'},
+  {title: '多级缓存', copy: '比较进程内 L1、Redis 与 MySQL 的读取路径，并理解常见缓存故障。'},
 ];
 </script>
 

@@ -53,13 +53,23 @@ test('guest reads public theory and logs in through the experiment dialog', asyn
   await expect(page.getByRole('button', {name: /网站介绍/})).toHaveClass(/course-item--selected/);
 
   await page.getByRole('button', {name: '登录实验', exact: true}).click();
-  await expect(page.getByRole('dialog', {name: '登录实验环境'})).toBeVisible();
+  const headerLoginDialog = page.getByRole('dialog', {name: '登录实验环境'});
+  await expect(headerLoginDialog).toBeVisible();
+  await expect(headerLoginDialog).toContainText('登录后即可创建和操作实验资源');
+  await expect(headerLoginDialog).not.toContainText('真实实验资源');
   await page.keyboard.press('Escape');
   await expect(page.getByRole('dialog', {name: '登录实验环境'})).toHaveCount(0);
 
   await page.getByRole('button', {name: /单机架构/}).click();
   await expect(page.locator('.markdown-body').getByRole('heading', {name: '单机架构'})).toBeVisible();
   await expect(page.getByRole('region', {name: '单机架构请求与资源边界'})).toBeVisible();
+
+  await expect(page.getByRole('button', {name: /缓存故障/})).toHaveCount(0);
+  await page.getByRole('button', {name: /多级缓存/}).click();
+  await expect(page.locator('.markdown-body').getByRole('heading', {name: '缓存穿透怎样发生'})).toBeVisible();
+  await expect(page.locator('.markdown-body').getByRole('heading', {name: '缓存击穿怎样发生'})).toBeVisible();
+  await expect(page.locator('.markdown-body').getByRole('heading', {name: '缓存雪崩怎样发生'})).toBeVisible();
+  await expect(page.locator('.markdown-body').getByRole('heading', {name: 'Redis 重启后为什么不会马上恢复命中率'})).toBeVisible();
 
   await page.getByRole('button', {name: /应用集群与负载均衡/}).click();
   await page.getByRole('tab', {name: '实验'}).click();

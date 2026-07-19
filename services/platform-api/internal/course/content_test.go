@@ -1,6 +1,7 @@
 package course
 
 import (
+	"slices"
 	"strings"
 	"testing"
 )
@@ -12,7 +13,6 @@ func TestContentStoreContainsMVPTheory(t *testing.T) {
 		"application-data-separation",
 		"application-cluster",
 		"multi-level-cache",
-		"cache-failures",
 	}
 
 	for _, slug := range slugs {
@@ -44,13 +44,18 @@ func TestContentStoreReturnsComingSoonContent(t *testing.T) {
 	}
 }
 
-func TestCacheFailuresCourseIsTheoryOnly(t *testing.T) {
+func TestMultiLevelCacheContainsFailureTheory(t *testing.T) {
 	store := NewContentStore()
-	content, _, lab := store.For(Course{Slug: "cache-failures", Title: "缓存故障"})
-	if lab.Available || lab.ScenarioType != "" || lab.AllowedInstanceRange != nil {
-		t.Fatalf("cache failures lab = %#v; want theory only", lab)
+	content, implementation, lab := store.For(Course{Slug: "multi-level-cache", Title: "多级缓存"})
+	for _, topic := range []string{"缓存穿透", "缓存击穿", "缓存雪崩", "Redis 重启"} {
+		if !strings.Contains(content, topic) {
+			t.Fatalf("multi-level cache theory does not contain %q", topic)
+		}
 	}
-	if !strings.Contains(content, "不提供独立缓存故障实验") {
-		t.Fatal("cache failures theory does not state the experiment boundary")
+	if !lab.Available || lab.ScenarioType != "multi_level_cache" {
+		t.Fatalf("multi-level cache lab = %#v; want active cache lab", lab)
+	}
+	if !slices.Contains(implementation.KeyConcepts, "cache-avalanche") {
+		t.Fatalf("key concepts = %#v; want merged cache failure concepts", implementation.KeyConcepts)
 	}
 }

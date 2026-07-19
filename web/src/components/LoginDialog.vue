@@ -96,7 +96,7 @@ onBeforeUnmount(() => {
         <p class="eyebrow">互联网后端架构学习平台</p>
         <h1 id="login-dialog-title">登录实验环境</h1>
         <p id="login-dialog-description" class="login-dialog__intro">
-          理论课程可直接阅读，登录后即可创建和操作真实实验资源。
+          理论课程可直接阅读，登录后即可创建和操作实验资源。
         </p>
         <form class="login-form" @submit.prevent="submit">
           <label>
